@@ -1,0 +1,451 @@
+---
+title: "Untitled"
+format: pdf
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+# install.packages("expm")
+# install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+# cmdstanr::install_cmdstan()
+```
+
+You can add options to executable code like this 
+
+```{r}
+#!/usr/bin/env Rscript
+
+# OU Kalman likelihood benchmark against Stan using a Lyapunov stable-matrix parametrization.
+#
+# Model convention:
+#   dX_t = -B (X_t - mu) dt + L dW_t,
+# with stationary covariance S and diffusion Q satisfying
+#   B S + S B' = Q.
+# A general dense stable selection-strength matrix is parametrized as
+#   B = (0.5 * Q + M) S^{-1},
+# where S and Q are symmetric positive definite and M is skew-symmetric.
+#
+# The observation model is
+#   Y_i = X_{t_i} + eps_i,   eps_i ~ N(0, sigma_obs^2 I).
+#
+# The Stan model marginalizes the latent states with a Kalman filter and uses
+#   F_delta = exp(-delta * B),
+#   C <- S + F_delta (C - S) F_delta'
+# for the OU prediction covariance.
+#
+# Requirements:
+#   install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+#   cmdstanr::install_cmdstan()
+#
+# Typical usage:
+#   Rscript ou_stan_lyapunov_benchmark.R
+#
+# You can edit the USER SETTINGS section below.
+
+suppressPackageStartupMessages({
+  library(cmdstanr)
+})
+
+# -----------------------------
+# USER SETTINGS
+# -----------------------------
+K <- 4L                 # OU dimension
+T_obs <- 300L           # number of observations
+Delta <- 0.05           # nominal mean interval for the irregular grid
+dt_jitter <- 0.50       # dt ~ Uniform(Delta * (1-jitter), Delta * (1+jitter))
+sigma_obs <- 0.10       # known observation noise standard deviation
+m_scale <- 0.35         # magnitude of skew-symmetric non-reversible component
+n_warmup <- 20L         # repeated evaluations before timing
+n_timed <- 100L         # repeated evaluations for timing
+seed <- 1L
+compile_stan <- TRUE
+run_short_sampling_check <- FALSE  # optional: verifies that the model can sample
+include_priors_for_sampling <- 1L  # used only in optional sampling check
+
+set.seed(seed)
+
+# -----------------------------
+# Small R helpers
+# -----------------------------
+make_spd <- function(K, diag_shift = 1.0, scale = 0.25) {
+  Z <- matrix(rnorm(K * K, sd = scale), K, K)
+  crossprod(Z) + diag(diag_shift, K)
+}
+
+make_skew <- function(K, scale = 0.2) {
+  M <- matrix(0, K, K)
+  if (K >= 2) {
+    vals <- rnorm(K * (K - 1) / 2, sd = scale)
+    pos <- 1L
+    for (i in seq_len(K - 1L)) {
+      for (j in (i + 1L):K) {
+        M[i, j] <- vals[pos]
+        M[j, i] <- -vals[pos]
+        pos <- pos + 1L
+      }
+    }
+  }
+  M
+}
+
+make_irregular_times <- function(T_obs, Delta, jitter = 0.5) {
+  if (T_obs <= 1L) {
+    return(0)
+  }
+  dt_min <- Delta * (1 - jitter)
+  dt_max <- Delta * (1 + jitter)
+  if (dt_min <= 0) {
+    stop("Delta * (1 - dt_jitter) must be positive")
+  }
+  c(0, cumsum(runif(T_obs - 1L, min = dt_min, max = dt_max)))
+}
+
+pack_skew_upper <- function(M) {
+  K <- nrow(M)
+  out <- numeric(K * (K - 1) / 2)
+  if (K >= 2) {
+    pos <- 1L
+    for (i in seq_len(K - 1L)) {
+      for (j in (i + 1L):K) {
+        out[pos] <- M[i, j]
+        pos <- pos + 1L
+      }
+    }
+  }
+  out
+}
+
+matrix_sqrt_spd <- function(S) {
+  ee <- eigen(S, symmetric = TRUE)
+  ee$vectors %*% diag(sqrt(pmax(ee$values, 0)), nrow(S)) %*% t(ee$vectors)
+}
+
+simulate_ou <- function(B, S, mu, times, sigma_obs) {
+  K <- length(mu)
+  T_obs <- length(times)
+  X <- matrix(NA_real_, T_obs, K)
+  Y <- matrix(NA_real_, T_obs, K)
+
+  X[1, ] <- as.numeric(mu + matrix_sqrt_spd(S) %*% rnorm(K))
+  Y[1, ] <- X[1, ] + rnorm(K, sd = sigma_obs)
+
+  for (i in seq_len(T_obs - 1L)) {
+    dt <- times[i + 1L] - times[i]
+    F <- expm::expm(-dt * B)
+    Q_dt <- S - F %*% S %*% t(F)
+    Q_dt <- 0.5 * (Q_dt + t(Q_dt))
+    X[i + 1L, ] <- as.numeric(mu + F %*% (X[i, ] - mu) + matrix_sqrt_spd(Q_dt) %*% rnorm(K))
+    Y[i + 1L, ] <- X[i + 1L, ] + rnorm(K, sd = sigma_obs)
+  }
+
+  list(X = X, Y = Y)
+}
+
+median_elapsed <- function(expr, n_warmup = 10L, n_timed = 50L) {
+  force(n_warmup)
+  force(n_timed)
+  for (i in seq_len(n_warmup)) {
+    force(expr())
+  }
+  gc()
+  times <- numeric(n_timed)
+  for (i in seq_len(n_timed)) {
+    t0 <- proc.time()[["elapsed"]]
+    force(expr())
+    times[i] <- proc.time()[["elapsed"]] - t0
+  }
+  c(
+    median_seconds = median(times),
+    mean_seconds = mean(times),
+    min_seconds = min(times),
+    max_seconds = max(times)
+  )
+}
+
+call_log_prob <- function(mod, upars, data, jacobian = FALSE) {
+  # CmdStanR has used slightly different formal names across versions.
+  # These fallbacks make the script more robust.
+  out <- try(mod$log_prob(upars = upars, data = data, jacobian = jacobian), silent = TRUE)
+  if (!inherits(out, "try-error")) return(out)
+
+  out <- try(mod$log_prob(upars = upars, data = data, jacobian_adjust_transform = jacobian), silent = TRUE)
+  if (!inherits(out, "try-error")) return(out)
+
+  mod$log_prob(upars, data = data, jacobian = jacobian)
+}
+
+call_grad_log_prob <- function(mod, upars, data, jacobian = FALSE) {
+  out <- try(mod$grad_log_prob(upars = upars, data = data, jacobian = jacobian), silent = TRUE)
+  if (!inherits(out, "try-error")) return(out)
+
+  out <- try(mod$grad_log_prob(upars = upars, data = data, jacobian_adjust_transform = jacobian), silent = TRUE)
+  if (!inherits(out, "try-error")) return(out)
+
+  mod$grad_log_prob(upars, data = data, jacobian = jacobian)
+}
+
+call_unconstrain <- function(mod, data, variables) {
+  if (is.null(mod$unconstrain_variables) || !is.function(mod$unconstrain_variables)) {
+    stop(
+      "CmdStanR unconstrain_variables() is not available; cannot benchmark without true unconstrained parameters.",
+      call. = FALSE
+    )
+  }
+
+  errors <- character()
+
+  out <- try(mod$unconstrain_variables(data = data, variables = variables), silent = TRUE)
+  if (!inherits(out, "try-error")) return(out)
+  errors <- c(errors, paste("data + variables:", conditionMessage(attr(out, "condition"))))
+
+  out <- try(mod$unconstrain_variables(data = data, init = variables), silent = TRUE)
+  if (!inherits(out, "try-error")) return(out)
+  errors <- c(errors, paste("data + init:", conditionMessage(attr(out, "condition"))))
+
+  out <- try(mod$unconstrain_variables(data, variables), silent = TRUE)
+  if (!inherits(out, "try-error")) return(out)
+  errors <- c(errors, paste("positional:", conditionMessage(attr(out, "condition"))))
+
+  stop(
+    paste(
+      "CmdStanR unconstrain_variables() failed for all supported call signatures:",
+      paste(errors, collapse = "\n"),
+      sep = "\n"
+    ),
+    call. = FALSE
+  )
+}
+# -----------------------------
+# Dependencies
+# -----------------------------
+if (!requireNamespace("expm", quietly = TRUE)) {
+  stop("Please install the expm package first: install.packages('expm')")
+}
+
+# -----------------------------
+# Generate a dense stable OU model
+# -----------------------------
+S_true <- make_spd(K, diag_shift = 1.0, scale = 0.30)
+Q_true <- make_spd(K, diag_shift = 0.5, scale = 0.20)
+M_true <- make_skew(K, scale = m_scale)
+B_true <- (0.5 * Q_true + M_true) %*% solve(S_true)
+mu_true <- rnorm(K, sd = 0.3)
+times <- make_irregular_times(T_obs, Delta, dt_jitter)
+
+cat("True selection-strength eigenvalues:\n")
+print(eigen(B_true, only.values = TRUE)$values)
+cat("Minimum real part:", min(Re(eigen(B_true, only.values = TRUE)$values)), "\n\n")
+if (T_obs > 1L) {
+  dt <- diff(times)
+  cat("Irregular time grid dt summary:\n")
+  print(summary(dt))
+  cat("\n")
+}
+
+sim <- simulate_ou(B_true, S_true, mu_true, times, sigma_obs)
+Y <- sim$Y
+
+stan_data <- list(
+  T = T_obs,
+  K = K,
+  y = lapply(seq_len(T_obs), function(i) as.numeric(Y[i, ])),
+  time = as.numeric(times),
+  sigma_obs = sigma_obs,
+  include_priors = 0L
+)
+
+# Initial constrained values. These are deliberately set near the truth so that
+# timing is not dominated by pathological covariance values.
+L_S_true <- t(chol(S_true))
+L_Q_true <- t(chol(Q_true))
+init_list <- list(
+  mu = as.numeric(mu_true),
+  L_S = L_S_true,
+  L_Q = L_Q_true,
+  m_raw = pack_skew_upper(M_true)
+)
+
+# -----------------------------
+# Stan model code
+# -----------------------------
+stan_code <- '
+functions {
+  matrix symmetrize(matrix A) {
+    return 0.5 * (A + A\');
+  }
+
+  matrix build_skew(vector m_raw, int K) {
+    matrix[K, K] M = rep_matrix(0, K, K);
+    int pos = 1;
+    if (K >= 2) {
+      for (i in 1:(K - 1)) {
+        for (j in (i + 1):K) {
+          M[i, j] = m_raw[pos];
+          M[j, i] = -m_raw[pos];
+          pos += 1;
+        }
+      }
+    }
+    return M;
+  }
+}
+
+data {
+  int<lower=1> T;
+  int<lower=1> K;
+  array[T] vector[K] y;
+  vector[T] time;
+  real<lower=0> sigma_obs;
+  int<lower=0, upper=1> include_priors;
+}
+
+transformed data {
+  int n_skew = K * (K - 1) / 2;
+  matrix[K, K] I_K = diag_matrix(rep_vector(1.0, K));
+  matrix[K, K] R = square(sigma_obs) * I_K;
+}
+
+parameters {
+  vector[K] mu;
+  cholesky_factor_cov[K] L_S;
+  cholesky_factor_cov[K] L_Q;
+  vector[n_skew] m_raw;
+}
+
+transformed parameters {
+  matrix[K, K] S;
+  matrix[K, K] Q;
+  matrix[K, K] M;
+  matrix[K, K] B;
+
+  S = multiply_lower_tri_self_transpose(L_S);
+  Q = multiply_lower_tri_self_transpose(L_Q);
+  M = build_skew(m_raw, K);
+
+  // B = (0.5 Q + M) S^{-1}; use right solve rather than explicit inverse.
+  B = mdivide_right_spd(0.5 * Q + M, S);
+}
+
+model {
+  vector[K] m;
+  matrix[K, K] C;
+
+  if (include_priors == 1) {
+    mu ~ normal(0, 2);
+    to_vector(L_S) ~ normal(0, 1);
+    to_vector(L_Q) ~ normal(0, 1);
+    m_raw ~ normal(0, 1);
+  }
+
+  // Stationary initialization.
+  m = mu;
+  C = S;
+
+  for (i in 1:T) {
+    matrix[K, K] Omega;
+    matrix[K, K] L_Omega;
+    matrix[K, K] C_Omega_solve_lower;
+    matrix[K, K] C_Omega_inv;
+    vector[K] innovation;
+
+    Omega = symmetrize(C + R);
+    L_Omega = cholesky_decompose(Omega);
+    innovation = y[i] - m;
+    target += multi_normal_cholesky_lpdf(y[i] | m, L_Omega);
+
+    // Measurement update for H = I, reusing the Cholesky factor of Omega.
+    C_Omega_solve_lower = mdivide_left_tri_low(L_Omega, transpose(C));
+    C_Omega_inv = mdivide_right_tri_low(transpose(C_Omega_solve_lower), L_Omega);
+    m = m + C_Omega_inv * innovation;
+    C = symmetrize(C - C_Omega_inv * C);
+
+    if (i < T) {
+      real dt = time[i + 1] - time[i];
+      matrix[K, K] F = matrix_exp(-dt * B);
+
+      // OU stationary covariance prediction:
+      // C <- S + F (C - S) F\'.
+      m = mu + F * (m - mu);
+      C = symmetrize(S + F * (C - S) * F\');
+    }
+  }
+}
+
+generated quantities {
+  matrix[K, K] B_check = B;
+}
+'
+
+stan_file <- file.path(tempdir(), "ou_lyapunov_kalman_benchmark.stan")
+writeLines(stan_code, stan_file)
+cat("Stan file written to:", stan_file, "\n")
+
+# -----------------------------
+# Compile and benchmark
+# -----------------------------
+if (compile_stan) {
+  mod <- cmdstan_model(stan_file, force_recompile = FALSE)
+
+  upars <- call_unconstrain(mod, stan_data, init_list)
+  cat("Number of unconstrained Stan parameters:", length(upars), "\n\n")
+
+  lp0 <- call_log_prob(mod, upars, stan_data, jacobian = FALSE)
+  gp0 <- call_grad_log_prob(mod, upars, stan_data, jacobian = FALSE)
+  cat("Initial log likelihood / target:", as.numeric(lp0), "\n")
+  cat("Gradient vector length:", length(gp0), "\n\n")
+
+  cat("Benchmarking log_prob...\n")
+  log_prob_stats <- median_elapsed(
+    expr = function() call_log_prob(mod, upars, stan_data, jacobian = FALSE),
+    n_warmup = n_warmup,
+    n_timed = n_timed
+  )
+  print(log_prob_stats)
+  cat("\n")
+
+  cat("Benchmarking grad_log_prob...\n")
+  grad_stats <- median_elapsed(
+    expr = function() call_grad_log_prob(mod, upars, stan_data, jacobian = FALSE),
+    n_warmup = n_warmup,
+    n_timed = n_timed
+  )
+  print(grad_stats)
+  cat("\n")
+
+  cat("Median log_prob time, ms:", 1000 * log_prob_stats[["median_seconds"]], "\n")
+  cat("Median grad_log_prob time, ms:", 1000 * grad_stats[["median_seconds"]], "\n")
+
+  if (run_short_sampling_check) {
+    cat("\nRunning a short sampling check with priors enabled...\n")
+    sampling_data <- stan_data
+    sampling_data$include_priors <- include_priors_for_sampling
+    fit <- mod$sample(
+      data = sampling_data,
+      chains = 1,
+      parallel_chains = 1,
+      iter_warmup = 100,
+      iter_sampling = 100,
+      refresh = 50,
+      init = list(init_list)
+    )
+    print(fit$summary(c("mu", "B_check")))
+  }
+}
+
+# -----------------------------
+# Suggested columns for your paper/table
+# -----------------------------
+cat("\nSuggested report columns:\n")
+cat("  K, T, parametrization, median log_prob ms, median grad_log_prob ms, number of unconstrained parameters\n")
+cat("  parametrization = Lyapunov general dense stable B = (0.5 Q + M) S^{-1}\n")
+
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
