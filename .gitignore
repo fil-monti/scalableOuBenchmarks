@@ -1,0 +1,35 @@
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# R session and project-local state
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Quarto/R Markdown render artifacts
+*.knit.md
+*_files/
+*_cache/
+*_freeze/
+/.quarto/
+/code/R_code/R_Figures/*.html
+
+# Generated figures; regenerate with code/R_code/R_Figures/benchmarksFigures.qmd
+/figures/
+
+# Local R package library used by tree benchmark scripts
+/benchmarks/benchmarksTrees/r-lib/
+
+# Julia scratch output
+*.ji
+Manifest.toml
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+*~
