@@ -1,0 +1,801 @@
+---
+title: "Simulations Figures"
+author: "Filippo Monti"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  pdf_document:
+    keep_tex: true
+    latex_engine: pdflatex
+    toc: yes
+    highlight: tango
+    df_print: kable
+fontsize: 11pt
+geometry: margin=1.2in
+editor_options:
+  markdown:
+    wrap: 72
+header-includes:
+  - \usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+  - \usepackage{bm}
+---
+::: hidden $$ \renewcommand{\bm}[1]{\boldsymbol{#1}} $$ :::
+
+```{r, setup, include=FALSE}
+# Stable, zero-edit setup for any machine
+set.seed(666)
+options(stringsAsFactors = FALSE)
+Sys.setlocale("LC_TIME", "C")
+
+# Load small helpers without hard-coded paths
+stopifnot(requireNamespace("fs", quietly = TRUE))
+stopifnot(requireNamespace("rprojroot", quietly = TRUE))
+
+# Resolve repo root and code dir; source libraries and paths
+root <- rprojroot::find_root(
+  rprojroot::has_file(".git") |
+    rprojroot::has_dir("code")
+)
+
+# Prefer R_code/, else code/R_code/
+R_path <- fs::path(root, "code", "R_code")
+sapply(file.path(R_path, c("R_libraries.R", "R_paths.R")), source)
+r_files <- list.files(path = R_functions_path, pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
+r_files <- append(r_files, list.files(path = R_classes_path, pattern = "\\.R$", full.names = TRUE))
+for (r_file in r_files) source(r_file)
+```
+
+<!-- 
+file.edit("/Users/filippomonti/Desktop/suchard_lab/NonParametricModelingOfCTMCs/code/R_code/R_Figures/benchmarksFigures.qmd") 
+-->
+# Preliminaries
+### Fonts Upload
+```{r, fonts, include=FALSE}
+loadCmuSerif
+```
+
+```{r}
+# sysfonts::font_add("CMU Serif", regular = "/Users/filippomonti/Library/Fonts/cmunrm.otf")
+# showtext_auto()   # automatically enables showtext for all devices
+```
+### Parameters
+```{r}
+xmlNameGp <- "simulation_GP" #nprSimulationHostDistanceConvex2
+xmlNameGlm <- "simulation_LL" #nprSimulationGlmHostDistanceConvex2
+```
+
+```{bash}
+#cp /Users/filippomonti/Desktop/AdditiveGaussianProcesses/output/log/nprSimulationGlmHostDistanceConvex2.log /Users/filippomonti/Desktop/npCTMC/output/nprSimulGp.log
+#cd /Users/filippomonti/Desktop/try_download/nprSimulationHostDistanceConvex2/Gp_E_HostDistance_HMC_1_1_1_1
+#cp nprSimulationHostDistanceConvex2.log /Users/filippomonti/Desktop/npCTMC/output/simulation_GP.log
+``` 
+
+# Simulation Models
+```{r}
+simulation = "on"
+jobsAttributes <- list("mana" = "Gp", "predictorName" = c("HostDistance"))
+additionalAttributes <- list("msim" = "lrm", "nstates" = as.vector(17)) 
+additionalAttributes <- append(additionalAttributes, list("tree" = "rabies", 
+                        "dataType" = "Alph", "align_length" = 0, 
+                        "shape" = "Convex"))
+```
+
+### Log Linear
+```{r}
+path_to_log <- file.path(input_path, paste0(xmlNameGlm, ".log"))
+jobsAttributes$mana <- "Glm"
+for (r_file in r_files) source(r_file)
+PJL <- AnalyserFromLog$new(project = "NPRates", path = path_to_log,
+                          jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.5, thinning = 1, burnOut = 1,
+                          plottingFlags = list(plottingLogRates = TRUE),#, plottingRatesLogRates=TRUE),
+                          actions = list(normalize=FALSE, exponentiate = FALSE, simulation = "on",
+                                         publicationQuality = TRUE, addClockRate = FALSE))
+
+# mcmcEval <- PJL$mcmc(1)
+ll_hostModel <- PJL$getData(1) |> dplyr::select(starts_with("host.model"))
+# p <- PJL$plotter()
+# print(mcmcEval$ESSSorted())
+summ_data_LL <- createPlottingDataLogRates(PJL$getDataToPlot(), addPredictor = TRUE, addTrueline = TRUE)
+```
+
+### Gaussian Process
+```{r}
+jobsAttributes$mana <- "Gp"
+path_to_log <- file.path(input_path, paste0(xmlNameGp, ".log"))
+
+# PJL <- AnalyserJobsList$new(project = "NPRates", path = path_to_xml,
+#                           # attributes = attributes,
+#                           jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+#                           burnIn = 0.5, thinning = 1, burnOut = 1,
+#                           plottingFlags = list(plottingLogRates = TRUE, plottingRatesLogRates=TRUE,
+#                                                plottingDerivatives = FALSE),
+#                           actions = list(normalize=TRUE,  useInput = FALSE,
+#                                          simulation = simulation, publicationQuality = TRUE, 
+#                                          centerData = FALSE, addClockRate = FALSE))
+path_to_xml <- file.path(input_path, xmlNameGp)
+PJL <- AnalyserFromLog$new(project = "NPRates", path = path_to_log,
+                          jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.5, thinning = 1, burnOut = 1,
+                          plottingFlags = list(plottingLogRates = TRUE),#, plottingRatesLogRates=TRUE),
+                          actions = list(normalize=FALSE, exponentiate = FALSE, simulation = "on",
+                                         publicationQuality = TRUE, addClockRate = FALSE))
+
+# mcmcEval <- PJL$mcmc(1)
+gp_hostModel <- PJL$getData(1) |> dplyr::select(starts_with("host.model")) 
+# hyper_cols <- c(grep("hyper", colnames(mcmcEval$data), value = TRUE), "clock.rate")
+# summary(mcmcEval$data[, hyper_cols])
+# mcmcEval$ESSSorted()
+summ_data_GP <- createPlottingDataLogRates(PJL$getDataToPlot(), addPredictor = TRUE, addTrueline = FALSE)
+# p <- PJL$plotter()
+# p$logRatesQuantiles
+```
+
+# Simulation Plot
+```{r}
+linesize = 0.5
+library(mgcv)
+summ_data_GP <- summ_data_GP %>%
+ mutate(
+   lowHPD = predict(gam(q05 ~ s(predictor, bs = "cs")), newdata = summ_data_GP),
+   highHPD = predict(gam(q95 ~ s(predictor, bs = "cs")), newdata = summ_data_GP)
+ )
+myplot <- ggplot(summ_data_LL, aes(x = predictor)) +
+  geom_ribbon(data = summ_data_GP, aes(ymin = lowHPD, ymax = highHPD), alpha = 0.5, fill = "darkgoldenrod1") +
+  geom_line(data = summ_data_GP, aes(y = median, color = "c", linetype = "c"), size = linesize) +
+  
+  geom_ribbon(aes(ymin = q05, ymax = q95), alpha = 0.5, fill = "#94CBEc") +
+  geom_line(aes(y = median, color = "b", linetype = "b"), size = linesize) +
+  
+  geom_line(aes(y = trueLine, color = "a", linetype = "a"), size = linesize, alpha=0.8) +
+  
+  labs(x = "Host genetic distance", y = "Log rates") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_color_manual(
+     name = "Legend",
+     values = c("a" = "#337538", "b" = "#2F67B1", "c" = "#F8766D"), 
+     labels = c("Truth", "LL", "GP")
+   ) +
+   scale_linetype_manual(
+     name = "Legend",
+     values = c("a" = "dashed", "b" = "solid", "c" = "solid"), 
+     labels = c("Truth", "LL", "GP"), 
+     guide = guide_legend(
+      override.aes = list(linetype = c("22228222", "solid", "solid")))
+   ) 
+  
+
+final_plot <- publicationQualitySettings(myplot) + theme(legend.position = c(1, 0.865), legend.justification = c(1, 1)) 
+final_plot
+
+gg_record(device = "pdf", width = 3, height = 2.5, units = "in", dpi = 300)   
+print(final_plot)
+gg_stop_recording()
+```
+
+```{r}
+if (save_plots) {
+  ggsave(
+    filename = paste0(output_figures_path, "simulationLogRates", ".pdf"),
+    plot = final_plot,
+    width = 3, height = 2.5, dpi = 300
+  )
+}
+```
+
+# Computing RMSE
+```{r}
+# ---- Inputs ----
+true <- as.numeric(summ_data_LL$trueLine)
+
+rmse_from_draws <- function(M, true) {
+  # M: draws x grid; returns vector of RMSE across draws
+  rmse <- apply(M, 1, function(x) sqrt(mean((x - true)^2)))
+  cat("RMSE\n")
+  cat("Median = ", median(rmse), "\n")
+  cat("Mean   = ", mean(rmse), "\n")
+  cat("HPDI 95% = (", quantile(rmse, c(0.025, 0.975)), ")\n")
+}
+
+# Compute RMSE samples (you already have these, but here for completeness)
+cat("GP Model:\n")
+rmse_from_draws(gp_hostModel, true)
+cat("\nLL Model:\n")
+rmse_from_draws(ll_hostModel, true)
+```
+
+
+# Gradient Benchmark Timing
+
+### Data
+
+```{r benchmark-data, message=FALSE}
+library(patchwork)
+
+method_levels <- c("Exact", "Approximate", "torchtree", "treeflow", "PhyloGrad")
+
+# ── Exact & Approximate (BEAST N=300 placeholders; Exact is replaced for N=100 rev) ────────────
+beast_exact <- tibble(
+  method    = "Exact",
+  K         = c(8L, 16L, 32L, 64L, 128L),
+  median_ms = c(0.71, 0.73, 0.73, 0.756, 2.699),
+  sd_ms     = c(0.001, 0.006, 0.010, 0.104, 0.236)
+)
+beast_approx <- tibble(
+  method    = "Approximate",
+  K         = c(8L, 16L, 32L, 64L, 128L),
+  median_ms = beast_exact$median_ms * 0.7,
+  sd_ms     = beast_exact$sd_ms     * 0.7
+)
+
+# ── N=300 placeholder (used for cols 2 & 3, and for treeflow in col 1) ───────
+fair_csv <- "/Users/filippomonti/Desktop/npctmcResub/npCTMC/code/benchmarks/rate_matrix_gradient/fair_comparison_results.csv"
+
+placeholder <- read_csv(fair_csv, show_col_types = FALSE) %>%
+  mutate(
+    method    = case_when(
+      str_starts(backend, "torchtree") ~ "torchtree",
+      str_starts(backend, "treeflow")  ~ "treeflow",
+      str_starts(backend, "phylograd") ~ "PhyloGrad",
+      TRUE                             ~ backend
+    ),
+    K         = as.integer(state_count),
+    median_ms = median_seconds * 1e3,
+    sd_ms     = sd_seconds     * 1e3
+  ) %>%
+  select(method, K, median_ms, sd_ms)
+
+# Columns 2 & 3: all methods from N=300 placeholder
+bench_placeholder <- bind_rows(beast_exact, beast_approx, placeholder) %>%
+  mutate(method = factor(method, levels = method_levels))
+
+# ── Actual BEAST Exact data for N=100 and N=1000 ─────────────────────────────
+beast_exact_n100_rev_csv <- "/Users/filippomonti/Desktop/npctmcResub/npCTMC/code/xml/gradient_timing_figures/n100_reversible_gradient_benchmark_force_all_real.csv"
+beast_exact_n100_nonrev_csv <- "/Users/filippomonti/Desktop/npctmcResub/npCTMC/code/xml/gradient_timing_figures/n100_nonreversible_gradient_benchmark.csv"
+beast_exact_n1000_rev_csv <- "/Users/filippomonti/Desktop/npctmcResub/npCTMC/code/xml/gradient_timing_figures/n1000_reversible_gradient_benchmark_force_all_real.csv"
+beast_exact_n1000_nonrev_csv <- "/Users/filippomonti/Desktop/npctmcResub/npCTMC/code/xml/gradient_timing_figures/n1000_nonreversible_gradient_benchmark.csv"
+
+read_beast_exact_benchmark <- function(path) {
+  read_csv(path, show_col_types = FALSE) %>%
+    filter(dirty) %>%
+    transmute(
+      method    = "Exact",
+      K         = as.integer(K),
+      median_ms = p50_ms,
+      sd_ms
+    )
+}
+
+copy_as_approximate <- function(data) {
+  data %>% mutate(method = "Approximate")
+}
+
+beast_exact_n100_rev <- read_beast_exact_benchmark(beast_exact_n100_rev_csv)
+beast_exact_n100_nonrev <- read_beast_exact_benchmark(beast_exact_n100_nonrev_csv)
+beast_approx_n100_rev <- copy_as_approximate(beast_exact_n100_rev)
+beast_approx_n100_nonrev <- copy_as_approximate(beast_exact_n100_nonrev)
+
+new_csv <- "/Users/filippomonti/Desktop/npctmcResub/npCTMC/code/benchmarks/rate_matrix_gradient/gradient_benchmarks_by_N.csv"
+
+new_n100 <- read_csv(new_csv, show_col_types = FALSE) %>%
+  filter(tip_count == 100) %>%
+  mutate(
+    method    = case_when(
+      backend == "torchtree-reversible"    ~ "torchtree",
+      backend == "torchtree-nonreversible" ~ "torchtree",
+      backend == "phylograd-reversible"    ~ "PhyloGrad",
+      backend == "treeflow"               ~ "treeflow"
+    ),
+    K         = as.integer(state_count),
+    median_ms = median_seconds * 1e3,
+    sd_ms     = sd_seconds     * 1e3
+  ) %>%
+  select(method, K, q_regime, median_ms, sd_ms)
+
+# Column 1, Row 1 — Reversible: Exact, torchtree, PhyloGrad, and treeflow from N=100; Approx copied from Exact
+bench_col1_rev <- bind_rows(
+  beast_exact_n100_rev, beast_approx_n100_rev,
+  new_n100 %>% filter(q_regime == "reversible") %>% select(-q_regime)
+) %>%
+  mutate(method = factor(method, levels = method_levels))
+
+# Column 1, Row 2 — Non-reversible: Exact, torchtree, and treeflow from N=100; Approx copied from Exact
+bench_col1_nonrev <- bind_rows(
+  beast_exact_n100_nonrev, beast_approx_n100_nonrev,
+  new_n100 %>% filter(q_regime == "nonreversible") %>% select(-q_regime)
+) %>%
+  mutate(method = factor(method, levels = method_levels))
+
+# ── Actual N=1000 data (Exact from BEAST; torchtree + PhyloGrad, K=8–64) ─────
+beast_exact_n1000_rev <- read_beast_exact_benchmark(beast_exact_n1000_rev_csv)
+beast_exact_n1000_nonrev <- read_beast_exact_benchmark(beast_exact_n1000_nonrev_csv)
+beast_approx_n1000_rev <- copy_as_approximate(beast_exact_n1000_rev)
+beast_approx_n1000_nonrev <- copy_as_approximate(beast_exact_n1000_nonrev)
+
+new_n1000 <- read_csv(new_csv, show_col_types = FALSE) %>%
+  filter(tip_count == 1000) %>%
+  mutate(
+    method    = case_when(
+      backend == "torchtree-reversible"    ~ "torchtree",
+      backend == "torchtree-nonreversible" ~ "torchtree",
+      backend == "phylograd-reversible"    ~ "PhyloGrad",
+      backend == "treeflow"               ~ "treeflow"
+    ),
+    K         = as.integer(state_count),
+    median_ms = median_seconds * 1e3,
+    sd_ms     = sd_seconds     * 1e3
+  ) %>%
+  select(method, K, q_regime, median_ms, sd_ms)
+
+# Column 2, Row 1 — Reversible: Exact, torchtree, PhyloGrad, and treeflow from N=1000; Approx copied from Exact
+bench_col2_rev <- bind_rows(
+  beast_exact_n1000_rev, beast_approx_n1000_rev,
+  new_n1000 %>% filter(q_regime == "reversible") %>% select(-q_regime)
+) %>%
+  mutate(method = factor(method, levels = method_levels))
+
+# Column 2, Row 2 — Non-reversible: Exact, torchtree, and treeflow from N=1000; Approx copied from Exact
+bench_col2_nonrev <- bind_rows(
+  beast_exact_n1000_nonrev, beast_approx_n1000_nonrev,
+  new_n1000 %>% filter(q_regime == "nonreversible") %>% select(-q_regime)
+) %>%
+  mutate(method = factor(method, levels = method_levels))
+```
+
+### Figure
+
+```{r benchmark-figure, fig.width=10, fig.height=8}
+library(grid)
+loadCmuFonts()
+
+fnt   <- "CMU Serif"
+fsz   <- 10   # axis text
+fszT  <- 12   # axis title / labels
+
+# method_cols <- c(
+#   "Exact"       = "#337538",
+#   "Approximate" = "#009E73",
+#   "torchtree"   = "#2F67B1",
+#   "treeflow"    = "#F8766D",
+#   "PhyloGrad"   = "#D4960A"
+# )
+method_cols <- c(
+  "Exact"       = "#2F67B1",
+  "Approximate" = "#2F67B1",
+  "torchtree"   = "#9B4356",
+  "treeflow"    = "#D67C2F",
+  "PhyloGrad"   = "#D4960A"
+)
+darker_cols <- c("#E56B63", "#D26059", "#BF554F", "#AB4A45", "#973F3B")
+
+maroon_cols <- c("#E06A68", "#C95D62", "#B2505C", "#9B4356", "#843650")
+darker_orange_cols <- c(
+  "#D67C2F",
+  "#C66F25",
+  "#B6621B",
+  "#A65512",
+  "#964909"
+)
+method_shps <- c(Exact = 16L, Approximate = 16L, torchtree = 16L, treeflow = 16L, PhyloGrad = 16L)
+method_alpha <- c(Exact = 1, Approximate = 0.5, torchtree = 1, treeflow = 1, PhyloGrad = 1)
+method_lty <- c(Exact = "solid", Approximate = "solid", torchtree = "dashed", treeflow = "dashed", PhyloGrad = "dashed")
+method_lw <-  c(Exact = 1, Approximate = 0.8, torchtree = 0.5, treeflow = 0.5, PhyloGrad = 0.5)
+ref_Ks <- c(8, 16, 32, 64, 128)
+
+# K² anchored at Exact@K=128; K³ anchored at PhyloGrad (rev) or torchtree (nonrev)@K=128.
+# Falls back to the last available K if K=128 is absent for the anchor method.
+make_ref_lines <- function(data, regime) {
+  get_anchor <- function(meth) {
+    sub <- dplyr::filter(data, method == meth, K == 128L)
+    if (nrow(sub) > 0) return(list(val = sub$median_ms[1], K = 128L))
+    sub2 <- dplyr::filter(data, method == meth) %>% arrange(K)
+    if (nrow(sub2) == 0) return(NULL)
+    last <- tail(sub2, 1)
+    list(val = last$median_ms[1], K = as.integer(last$K[1]))
+  }
+  k3_meth <- if (regime == "reversible") "PhyloGrad" else "torchtree"
+  ea  <- get_anchor("Exact")
+  k3  <- get_anchor(k3_meth)
+  ref_df <- tibble()
+  if (!is.null(ea))
+    ref_df <- bind_rows(ref_df,
+      tibble(K = ref_Ks, ref = "K^2", value = ea$val * (ref_Ks / ea$K)^2))
+  if (!is.null(k3))
+    ref_df <- bind_rows(ref_df,
+      tibble(K = ref_Ks, ref = "K^3", value = k3$val * (ref_Ks / k3$K)^3))
+  ref_df
+}
+
+bench_panel <- function(data, methods, x_title = FALSE, show_ref = TRUE,
+                        regime = "reversible") {
+  d <- filter(data, method %in% methods) %>%
+       mutate(method = factor(method, levels = methods))
+  ref_df <- if (show_ref) make_ref_lines(data, regime) else tibble()
+  p <- ggplot(d, aes(K, median_ms, colour = method, shape = method,
+                     alpha = method, linetype = method, linewidth = method))
+  if (show_ref && nrow(ref_df) > 0) {
+    p <- p +
+      geom_line(data = ref_df, aes(x = K, y = value, group = ref),
+                colour = "grey55", linewidth = 0.4, linetype = "22",
+                inherit.aes = FALSE) +
+      geom_text(data = dplyr::filter(ref_df, K == 128),
+                aes(x = K, y = value, label = ref),
+                colour = "grey40", size = 3.2, family = fnt,
+                hjust = -0.5, inherit.aes = FALSE, parse = TRUE)
+  }
+  p <- p +
+    geom_errorbar(
+      aes(ymin = pmax(median_ms - sd_ms, 5e-3), ymax = median_ms + sd_ms),
+      width = 0.06, linewidth = 0.35, alpha = 0.6
+    ) +
+    geom_line(linewidth = 0.7) +
+    geom_point(
+      data = d, #subset(d, method == "Approximate"),
+      aes(x = K, y = median_ms),
+      inherit.aes = FALSE,
+      colour = "white",
+      alpha = 1,
+      size = 3.4,
+      stroke = 0
+    ) +
+    geom_point(size = 2) +
+    scale_x_continuous(
+      trans  = "log2",
+      breaks = c(8, 16, 32, 64, 128),
+      labels = as.character(c(8, 16, 32, 64, 128)),
+      expand = expansion(mult = c(0.05, 0.14))
+    ) +
+    scale_y_log10(
+      breaks       = 10^(-2:5),
+      labels       = scales::trans_format("log10", scales::math_format(10^.x)),
+      minor_breaks = NULL
+    ) +
+    scale_colour_manual(values = method_cols[methods], name = NULL) +
+    scale_shape_manual(values  = method_shps[methods],  name = NULL) +
+    scale_alpha_manual(values  = method_alpha[methods],  name = NULL) +
+    scale_linetype_manual(values = method_lty[methods], name = NULL) +
+    scale_linewidth_manual(values = method_lw[methods], name = NULL) +
+    labs(x = if (x_title) "K" else NULL, y = NULL) +
+    theme_classic(base_size = fszT, base_family = fnt) +
+    theme(
+      aspect.ratio           = 1,
+      panel.border           = element_rect(color = "black", fill = NA, linewidth = 0.5),
+      panel.grid.major.y     = element_line(color = "grey90", linetype = "33", linewidth = 0.4),
+      panel.grid.major.x     = element_blank(),
+      panel.grid.minor       = element_blank(),
+      axis.line              = element_blank(),
+      axis.ticks             = element_line(linewidth = 0.3),
+      axis.text              = element_text(size = fsz,  family = fnt, color = "black"),
+      axis.title             = element_text(size = fszT, family = fnt, color = "black"),
+      plot.margin            = margin(4, 14, 4, 4, "pt"),
+      legend.position        = "none"
+    )
+  if (regime == "nonreversible") {
+    tt_row <- dplyr::filter(data, method == "torchtree", K == 64L)
+    ex_row <- dplyr::filter(data, method == "Exact",     K == 64L)
+    if (nrow(tt_row) > 0 && nrow(ex_row) > 0) {
+      y_from <- tt_row$median_ms[1] / 1.3
+      y_to   <- ex_row$median_ms[1] * 1.5
+      p <- p + annotate(
+        "segment",
+        x = 64, xend = 64, y = y_from, yend = y_to,
+        colour = "black", linewidth = 0.3,
+        arrow = arrow(type = "open", length = unit(0.05, "inches"))
+      )
+      y_mid   <- sqrt(y_from * y_to)   # geometric midpoint (log scale)
+      ratio   <- round(tt_row$median_ms[1] / ex_row$median_ms[1])
+      p <- p + annotate(
+        "text",
+        x = 64 * 1.08, y = y_mid,
+        label = paste0(ratio, "x"),
+        hjust = 0, vjust = 0.5,
+        size = 3.2, family = fnt, colour = "black"
+      )
+    }
+  }
+  p
+}
+
+# ── Shared y-axis label ───────────────────────────────────────────────────────
+y_lab <- wrap_elements(
+  grid::textGrob("Time (ms)", rot = 90,
+                 gp = grid::gpar(fontsize = fszT, fontfamily = fnt))
+)
+
+# ── Row / column label helpers ───────────────────────────────────────────────
+rl <- function(lab) {
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5, label = lab,
+             angle = 90, size = 4, fontface = "bold",
+             family = fnt, hjust = 0.5) +
+    theme_void()
+}
+cl <- function(lab) {
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.5, label = lab,
+             size = 4, fontface = "bold",
+             family = fnt, hjust = 0.5) +
+    theme_void()
+}
+```
+
+
+```{r benchmark-figure, fig.width=10, fig.height=8}
+# ── Shared 2-column legend ────────────────────────────────────────────────────
+# Col 1: Exact, Approximate  |  Col 2: torchtree, treeflow, PhyloGrad
+# Each entry: segment from x_start to x_start+0.06, point at midpoint, label after
+c1x <- 0.26   # col 1 segment x-start
+c2x <- 0.43   # col 2 segment x-start (tighter gap than before)
+seg <- 0.025  # segment length (1/4 of original)
+gap <- 0.018   # gap between segment end and label
+
+leg_df <- tibble(
+  method = factor(
+    c("Exact", "Approximate", "torchtree", "treeflow", "PhyloGrad"),
+    levels = names(method_cols)
+  ),
+  x_seg0 = c(c1x, c1x, c2x, c2x, c2x),
+  x_pt   = c(c1x, c1x, c2x, c2x, c2x) + seg / 2,
+  x_lab  = c(c1x, c1x, c2x, c2x, c2x) + seg + gap,
+  y      = c(1.5,  0.5,  2.0,  1.0,  0.0)
+)
+leg_titles <- tibble(
+  label = c("Proposed methods", "Benchmarks"),
+  x     = c(c1x, c2x),
+  y     = c(2.9, 2.9)
+)
+leg_panel <- ggplot(leg_df) +
+  geom_text(data = leg_titles, aes(x = x, y = y, label = label),
+            hjust = 0, size = 3.5, family = fnt, fontface = "bold",
+            colour = "grey10", inherit.aes = FALSE) +
+  geom_segment(aes(x = x_seg0, xend = x_seg0 + seg,
+                 y = y, yend = y,
+                 colour = method,
+                 alpha = method,
+                 linetype = method
+                 # linewidth = method
+                 ),
+               # linetype= "solid",
+             linewidth = 0.8,
+             show.legend = FALSE) +
+  # geom_point(
+  #   data = leg_df, #subset(leg_df, method == "Approximate"),
+  #   aes(x = x_pt, y = y, shape = method),
+  #   inherit.aes = FALSE,
+  #   colour = "white",
+  #   alpha = 1,
+  #   size = 2.4,
+  #   stroke = 0,
+  #   show.legend = FALSE
+  # ) +
+  # geom_point(aes(x = x_pt, y = y,
+  #                colour = method,
+  #                shape = method,
+  #                alpha = method),
+  #            size = 2.7, show.legend = FALSE) +
+  # geom_segment(aes(x = x_seg0, xend = x_seg0 + seg,
+  #                  y = y, yend = y, colour = method),
+  #              linewidth = 0.175, show.legend = FALSE) +
+  # geom_point(aes(x = x_pt, y = y, colour = method, shape = method),
+  #            size = 2.5, show.legend = FALSE) +
+  geom_text(aes(x = x_lab, y = y, label = method),
+            hjust = 0, size = 3.5, family = fnt, colour = "grey20") +
+  scale_colour_manual(values = method_cols) +
+  # scale_shape_manual(values  = method_shps) +
+  scale_alpha_manual(values = method_alpha) +
+  scale_linetype_manual(values = method_lty) +
+  # scale_linewidth_manual(values = method_lw) +
+  scale_x_continuous(limits = c(0, 0.75)) +
+  scale_y_continuous(limits = c(-0.5, 3.3)) +
+  theme_void() +
+  theme(legend.position = "none")
+
+# ── Panels ───────────────────────────────────────────────────────────────────
+real    <- c("Exact", "Approximate", "torchtree", "treeflow", "PhyloGrad")
+complex <- c("Exact", "Approximate", "torchtree", "treeflow")
+
+# Col 1: actual N=100 data (Exact, torchtree, and PhyloGrad measured where available; remaining proposed values use placeholders)
+# Cols 2–3: N=300 placeholder throughout
+p11 <- bench_panel(bench_col1_rev,    real,    x_title = FALSE, regime = "reversible")
+p12 <- bench_panel(bench_col2_rev,    real,    x_title = FALSE, regime = "reversible")
+p13 <- bench_panel(bench_placeholder, real,    x_title = FALSE, regime = "reversible")
+p21 <- bench_panel(bench_col1_nonrev, complex, x_title = TRUE,  regime = "nonreversible")
+p22 <- bench_panel(bench_col2_nonrev, complex, x_title = TRUE,  regime = "nonreversible")
+p23 <- bench_panel(bench_placeholder, complex, x_title = TRUE,  regime = "nonreversible")
+
+# ── Assemble via design-string (cell spanning) ────────────────────────────────
+# 5 cols × 4 rows | widths c(0.03, 0.05, 1, 1, 1) | heights c(0.06, 1, 1, 0.22)
+#
+#   #ABCD   ← col headers (A = spacer for row-label col)
+#   EFGHI   ← Reversible row  (E = y_lab)
+#   EJKLM   ← Non-reversible  (E spans rows 2-3)
+#   #NOOO   ← legend spanning cols 3-5 (O)
+#
+# Plot order by first appearance: A B C D E F G H I J K L M N O
+bench_fig <- wrap_plots(
+  plot_spacer(),        # A
+  cl("N = 100"),        # B
+  cl("N = 1,000"),      # C
+  cl("N = 10,000"),     # D
+  y_lab,                # E  (spans rows 2-3, col 1)
+  rl("Reversible"),     # F
+  p11, p12, p13,        # G H I
+  rl("Non-reversible"), # J
+  p21, p22, p23,        # K L M
+  plot_spacer(),        # N
+  leg_panel,            # O  (spans cols 3-5, row 4)
+  design = "
+#ABCD
+EFGHI
+EJKLM
+#NOOO
+",
+  widths  = c(0.06, 0.05, 1, 1, 1),
+  heights = c(0.06, 1, 1, 0.22)
+)
+
+bench_fig
+```
+
+```{r benchmark-figure, fig.width=10, fig.height=8}
+g_record(bench_fig,  width    = 10, height = 8)
+```
+```{r}
+g_record(bench_fig,  width    = 10, height = 8)
+```
+
+```{r benchmark-save}
+if (save_plots) {
+  ggsave(
+    filename = paste0(output_figures_path, "gradientBenchmark.pdf"),
+    plot     = bench_fig,
+    width    = 10, height = 8, dpi = 300
+  )
+}
+```
+
+# Gradient Benchmark — Reversible Only (seconds)
+
+```{r benchmark-rev-seconds, fig.width=7, fig.height=5}
+# Convert data to seconds for all three columns
+to_sec <- function(d) mutate(d, median_ms = median_ms / 1e3, sd_ms = sd_ms / 1e3)
+
+bench_col1_rev_s    <- to_sec(bench_col1_rev)
+bench_col2_rev_s    <- to_sec(bench_col2_rev)
+bench_placeholder_s <- to_sec(bench_placeholder)
+
+bench_panel_s <- function(data, methods, x_title = FALSE, regime = "reversible") {
+  d <- filter(data, method %in% methods) %>%
+       mutate(method = factor(method, levels = methods))
+  ref_df <- make_ref_lines(data, regime)
+  ggplot(d, aes(K, median_ms, colour = method, shape = method,
+                alpha = method, linetype = method, linewidth = method)) +
+    geom_line(data = ref_df, aes(x = K, y = value, group = ref),
+              colour = "grey55", linewidth = 0.4, linetype = "22", inherit.aes = FALSE) +
+    geom_text(data = dplyr::filter(ref_df, K == 128),
+              aes(x = K, y = value, label = ref),
+              colour = "grey40", size = 3.2, family = fnt,
+              hjust = -0.15, inherit.aes = FALSE, parse = TRUE) +
+    geom_errorbar(
+      aes(ymin = pmax(median_ms - sd_ms, 5e-6), ymax = median_ms + sd_ms),
+      width = 0.06, linewidth = 0.35, alpha = 0.6
+    ) +
+    geom_line(linewidth = 0.7) +
+    geom_point(data = d, aes(x = K, y = median_ms), inherit.aes = FALSE,
+               colour = "white", alpha = 1, size = 3.4, stroke = 0) +
+    geom_point(size = 2) +
+    scale_x_continuous(
+      trans  = "log2",
+      breaks = c(8, 16, 32, 64, 128),
+      labels = as.character(c(8, 16, 32, 64, 128)),
+      expand = expansion(mult = c(0.05, 0.14))
+    ) +
+    scale_y_log10(
+      breaks       = 10^(-5:3),
+      labels       = scales::trans_format("log10", scales::math_format(10^.x)),
+      minor_breaks = NULL
+    ) +
+    scale_colour_manual(values = method_cols[methods], name = NULL) +
+    scale_shape_manual(values  = method_shps[methods],  name = NULL) +
+    scale_alpha_manual(values  = method_alpha[methods],  name = NULL) +
+    scale_linetype_manual(values = method_lty[methods], name = NULL) +
+    scale_linewidth_manual(values = method_lw[methods], name = NULL) +
+    labs(x = if (x_title) "K" else NULL, y = NULL) +
+    theme_classic(base_size = fszT, base_family = fnt) +
+    theme(
+      aspect.ratio       = 1,
+      panel.border       = element_rect(color = "black", fill = NA, linewidth = 0.5),
+      panel.grid.major.y = element_line(color = "grey90", linetype = "33", linewidth = 0.4),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor   = element_blank(),
+      axis.line          = element_blank(),
+      axis.ticks         = element_line(linewidth = 0.3),
+      axis.text          = element_text(size = fsz,  family = fnt, color = "black"),
+      axis.title         = element_text(size = fszT, family = fnt, color = "black"),
+      plot.margin        = margin(4, 14, 4, 4, "pt"),
+      legend.position    = "none", 
+      panel.background = element_rect(fill = "transparent", colour = NA),
+      plot.background  = element_rect(fill = "transparent", colour = NA)
+    )
+}
+
+real_rev <- c("Exact", "Approximate", "torchtree", "treeflow", "PhyloGrad")
+
+pr1 <- bench_panel_s(bench_col1_rev_s,    real_rev, x_title = TRUE, regime = "reversible")
+pr2 <- bench_panel_s(bench_col2_rev_s,    real_rev, x_title = TRUE, regime = "reversible")
+pr3 <- bench_panel_s(bench_placeholder_s, real_rev, x_title = TRUE, regime = "reversible")
+
+y_lab_s <- wrap_elements(
+  grid::textGrob("Time (s)", rot = 90,
+                 gp = grid::gpar(fontsize = fszT, fontfamily = fnt))
+)
+
+# Rebuild legend with wider column spacing to avoid bold-title overlap in 7" panel
+s_c1x <- 0.18; s_c2x <- 0.52
+leg_df_s <- tibble(
+  method = factor(real_rev, levels = names(method_cols)),
+  x_seg0 = c(s_c1x, s_c1x, s_c2x, s_c2x, s_c2x),
+  x_lab  = c(s_c1x, s_c1x, s_c2x, s_c2x, s_c2x) + seg + gap,
+  y      = c(1.5, 0.5, 2.0, 1.0, 0.0)
+)
+leg_titles_s <- tibble(label = c("Proposed methods", "Benchmarks"),
+                       x = c(s_c1x, s_c2x), y = c(2.9, 2.9))
+
+leg_panel_s <- ggplot(leg_df_s) +
+  geom_text(data = leg_titles_s, aes(x = x, y = y, label = label),
+            hjust = 0, size = 3.5, family = fnt, fontface = "bold",
+            colour = "grey10", inherit.aes = FALSE) +
+  geom_segment(aes(x = x_seg0, xend = x_seg0 + seg, y = y, yend = y,
+                   colour = method, alpha = method, linetype = method),
+               linewidth = 0.8, show.legend = FALSE) +
+  geom_text(aes(x = x_lab, y = y, 
+                label = dplyr::recode(as.character(method),
+      "PhyloGrad" = "PhyloGrad (only reversible)")),
+            hjust = 0, size = 3.5, family = fnt, colour = "grey20") +
+  scale_colour_manual(values = method_cols) +
+  scale_alpha_manual(values  = method_alpha) +
+  scale_linetype_manual(values = method_lty) +
+  scale_x_continuous(limits = c(0, 0.85)) +
+  scale_y_continuous(limits = c(-0.5, 3.3)) +
+  theme_void() + theme(legend.position = "none")
+
+cl <- function(x) {
+  ggplot() +
+    annotate("text", x = 0.5, y = 0.2, label = x,
+             size = 4.5, family = fnt, fontface = "bold") +
+    xlim(0, 1) + ylim(0, 1) +
+    theme_void() +
+    theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+}
+
+bench_fig_rev_s <- wrap_plots(
+  cl("N = 100"),      # A
+  cl("N = 1,000"),    # B
+  cl("N = 10,000"),   # C
+  y_lab_s,            # D
+  pr1,                # E
+  pr2,                # F
+  pr3,                # G
+  leg_panel_s,        # H  (spans cols 2-4)
+  design = "#ABC
+DEFG
+#HHH
+",
+  widths  = c(0.11, 1, 1, 1),
+  heights = c(0.1, 0.5, 0.15)
+)
+
+bench_fig_rev_s
+g_record(bench_fig_rev_s,  width    = 7, height = 4)
+```
+
+```{r benchmark-rev-seconds-save}
+if (save_plots) {
+  ggsave(
+    filename = paste0(output_figures_path, "gradientBenchmarkRevSeconds.pdf"),
+    plot     = bench_fig_rev_s,
+    width    = 7, height = 5, dpi = 300
+  )
+}
+```
+

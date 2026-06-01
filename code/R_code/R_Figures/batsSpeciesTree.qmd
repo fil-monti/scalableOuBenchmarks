@@ -1,0 +1,597 @@
+---
+title: "batsSpeciesTree"
+format: pdf
+---
+
+```{r, setup, include=FALSE}
+# Stable, zero-edit setup for any machine
+set.seed(666)
+options(stringsAsFactors = FALSE)
+Sys.setlocale("LC_TIME", "C")
+
+# Load small helpers without hard-coded paths
+stopifnot(requireNamespace("fs", quietly = TRUE))
+stopifnot(requireNamespace("rprojroot", quietly = TRUE))
+
+# Resolve repo root and code dir; source libraries and paths
+root <- rprojroot::find_root(
+  rprojroot::has_file(".git") |
+    rprojroot::has_dir("code")
+)
+
+# Prefer R_code/, else code/R_code/
+R_path <- fs::path(root, "code", "R_code")
+sapply(fs::path(R_path, c("R_libraries.R", "R_paths.R")), source)
+r_files <- list.files(path = R_functions_path, pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
+r_files <- append(r_files, list.files(path = R_classes_path, pattern = "\\.R$", full.names = TRUE))
+for (r_file in r_files) source(r_file)
+```
+
+<!-- ```{bash} -->
+<!-- XML="nprRandomTreeGlmHostDistance2" -->
+<!-- MYPATH="/Users/filippomonti/Desktop/AdditiveGaussianProcesses/output/log" -->
+<!-- MYPATH="/Users/filippomonti/Desktop/try_download" -->
+<!-- cp ${MYPATH}/${XML}/Glm_E_HostDistance_HMC_1_1_1_1/${XML}.log /Users/filippomonti/Desktop/npCTMC/output/rabies_GLM.log -->
+<!-- #ls /Users/filippomonti/Desktop/try_download/${XML}/Glm_E_HostDistance_HMC_1_1_1_1 -->
+<!-- #/Gp_E_HostDistance_HMC_1_1_1_1 -->
+<!-- #cp nprSimulationHostDistanceConvex2.log /Users/filippomonti/Desktop/npCTMC/output/simulation_GP.log -->
+<!-- ```  -->
+# PRELIMINARIES
+### Parameters settings
+```{r}
+xmlNameGP <- "rabies_GP"
+xmlNameLL <- "rabies_LL"
+mcc_treeGP <- "rabies_GP_MCC.tree"
+save_plots = FALSE
+```
+### Fonts uploading
+```{r}
+loadCmuSerif()
+# library(mgcv)
+# font_add("CMU Serif", regular = "/Users/filippomonti/Library/Fonts/cmunrm.otf")
+# showtext_auto()   # automatically enables showtext for all devices
+```
+
+
+# General dictionary definitions
+```{r}
+horizonal <- TRUE
+bat_species_info <- list(
+  Ap  = list(letter = "A", color = "#025196"),  #9E0142
+  Ph = list(letter = "B", color = "#5DA899"), 
+  Ps  = list(letter = "C", color = "#94CBEc"), ##E6AB02
+  
+  My  = list(letter = "D", color = "#D1E5F0"),
+  Ma  = list(letter = "E", color = "#2F67B1"),
+  Mc = list(letter = "F",  color = "#4393C3"),
+  Ml  = list(letter = "G",  color = "#337538"),
+  
+  Ef  = list(letter = "H",  color = "#512888"),
+  Ln  = list(letter = "I",  color = "#9F4A96"),
+  Nh = list(letter = "J", color = "#C26A77"),
+  
+  Lb  = list(letter = "K", color = "#FDB338"),
+  Lbl = list(letter = "L",  color = "#FF6347"),   #9F4A96.  #F46D43
+  Lc  = list(letter = "M", color = "#ff0000"),
+  Li = list(letter = "N", color = "#ff7400"),
+  
+  Ls = list(letter = "O",  color = "#FFA500"),   #9F4A96.  #F46D43
+  Lx  = list(letter = "P", color = "#FFD700"),
+  Tb = list(letter = "Q", color = "#6A4A3C")
+
+  # Unassigned = list(letter = "Z", color = "grey90")
+)
+
+bat_species_names <- list(
+  Ap = list(nickname = "Ap", latin_name = "Antrozous pallidus", common_name = "Pallid Bat"),
+  Ph = list(nickname = "Ph", latin_name = "Parastrellus hesperus", common_name = "Canyon Bat"),
+  Ps = list(nickname = "Ps", latin_name = "Perimyotis subflavus", common_name = "Tricolored Bat"),
+  
+  My = list(nickname = "My", latin_name = "Myotis yumanensis", common_name = "Yuma Myotis"),
+  Ma = list(nickname = "Ma", latin_name = "Myotis austroriparius", common_name = "Southeastern Myotis"),
+  Mc = list(nickname = "Mc", latin_name = "Myotis californicus", common_name = "California Myotis"),
+  Ml = list(nickname = "Ml", latin_name = "Myotis lucifugus", common_name = "Little Brown Bat"), # Duplicate, but
+  
+  Ef = list(nickname = "Ef", latin_name = "Eptesicus fuscus", common_name = "Big Brown Bat"),
+  Ln = list(nickname = "Ln", latin_name = "Myotis septentrionalis", common_name = "Northern Long-eared Bat"),
+  Nh = list(nickname = "Nh", latin_name = "Nycticeius humeralis", common_name = "Evening Bat"),
+  
+  
+  Lb = list(nickname = "Lb", latin_name = "Lasiurus borealis", common_name = "Eastern Red Bat"),
+  Lbl = list(nickname = "Lbl", latin_name = "Myotis leibii", common_name = "Eastern Small-footed Bat"),
+  Lc = list(nickname = "Lc", latin_name = "Lasiurus cinereus", common_name = "Hoary Bat"),
+  Li = list(nickname = "Li", latin_name = "Myotis lucifugus", common_name = "Little Brown Bat"),
+  
+  Ls = list(nickname = "Ls", latin_name = "Lasiurus seminolus", common_name = "Seminole Bat"),
+  Lx = list(nickname = "Lx", latin_name = "Leptonycteris nivalis", common_name = "Mexican Long-nosed Bat"),
+  Tb = list(nickname = "Tb", latin_name = "Tadarida brasiliensis", common_name = "Mexican Free-tailed Bat")
+)
+info_merged <- mapply(
+  function(info, names) {
+    c(info, names)  # combine both sublists
+  },
+  bat_species_info,
+  bat_species_names,
+  SIMPLIFY = FALSE
+)
+
+general_info_new <- setNames(
+  lapply(info_merged, function(x) list(nickname = x$nickname,  color = x$color)),
+  sapply(info_merged, function(x) x$letter)
+)
+
+legend_labels <- sapply(general_info_new, function(x) x$nickname)
+colors_palette <- sapply(general_info_new, function(x) x$color) 
+
+bat_species_df1 <- map_dfr(
+  bat_species_names,
+  ~ as.data.frame(.x, stringsAsFactors = FALSE),
+  .id = "code"  # adds the top-level names (e.g., "Ap") as a column
+)
+bat_species_df2 <- map_dfr(
+  bat_species_info,
+  ~ as.data.frame(.x, stringsAsFactors = FALSE),
+  .id = "code"  # adds the top-level names (e.g., "Ap") as a column
+)
+bat_species_df <- left_join(bat_species_df1, bat_species_df2, by = "code") |> 
+  arrange(code)
+```
+
+# TREES
+## Viral Tree 
+<!-- ```{bash} -->
+<!-- TREE_FILE="rabies_GP" -->
+<!-- MYPATH="/Users/filippomonti/Desktop/npCtmc/output" -->
+<!-- ls ${MYPATH} -->
+<!-- TreeAnnotator -burnin 100 -heights median ${MYPATH}/${TREE_FILE}.trees  ${MYPATH}/rabies_GP_MCC.tree -->
+<!-- ``` -->
+
+*Remark*: Annotated MCC viral tree is necessary to proceed from here.
+Uploading the MCC viral tree
+
+```{r}
+path_to_mcc_treeGP <- fs::path(input_path, mcc_treeGP)
+options(ignore.negative.edge=TRUE)
+
+tree <- read.beast(path_to_mcc_treeGP)
+phylo_object <- as.phylo(tree)
+tree_height <- max(node.depth.edgelength(phylo_object)) |> print()
+# Identify negative branch lengths
+neg_branches_idx <- which(phylo_object$edge.length < 0)
+if (length(neg_branches_idx) > 0) {
+  cat("Found", length(neg_branches_idx), "negative branch lengths.\n")
+  cat("Original negative lengths:", phylo_object$edge.length[neg_branches_idx], "\n")
+
+  # Set negative branch lengths to zero
+  phylo_object$edge.length[neg_branches_idx] <- 0
+
+  cat("Newick tree with negative branches set to zero:\n")
+  # print(write.tree(phylo_object))
+} else {
+  cat("No negative branch lengths found.\n")
+  # print(write.tree(phylo_object))
+}
+# write.tree(as.phylo(tree))
+```
+
+```{r}
+general_info <- bat_species_info
+legend_labels <- names(general_info)
+colors_palette <- sapply(general_info, function(x) x$color) 
+tree@data <- tree@data %>%
+  dplyr::mutate(host = ifelse(host=="Mc+Ml", "Mc", host)) 
+```
+
+```{r}
+if (horizonal) {
+most_recent_sampling_date <- as.Date("2005-05-01") 
+mytree <- ggtree(tree, size=0.5, aes(color = host), mrsd = most_recent_sampling_date) +
+   theme_tree2() +
+  # coord_flip() +
+  scale_x_continuous(  # Reverse the axis to have time from top (old) to bottom (new)
+    # name = "Sampling Year",
+    labels = function(x) x,
+    breaks = scales::breaks_pretty(n = 5), 
+    # expand = expansion(mult = c(0.1, 0.1), add = c(0, 0)),
+    limits = c(1750, 2006) # Set limits to the range of years
+  ) +
+  # scale_x_continuous(breaks = my_breaks) +
+  scale_color_manual(
+    values = colors_palette,
+    labels = legend_labels,
+    na.value = "transparent"
+  ) +
+  theme(
+    panel.grid.major.x = element_line(color = "grey80", linetype = "dashed"),
+    # axis.text.x = element_blank(),        
+    axis.ticks.x = element_blank(),        
+    axis.line.x = element_blank(),
+    legend.position = "none",
+    # panel.border = element_rect(color = "black", fill = NA)
+    # panel.spacing = unit(c(0, 0, 0, 0), "cm"), # Remove spacing around the plot
+    plot.margin = unit(c(0.2,-0.82,0,0), "cm") # Adjust margins as needed
+      # unit(rep(-1.3,4), "cm")
+  ) +
+  expand_limits(y = -5) 
+# print(mytree)
+final_tree <- mytree |> addHPD_rectangles_background(
+  tree = mytree,
+  nodes = c(373, 429, 430, 469, 470, 431),
+  color = "#FFDB58", alpha = 0.6, width = 2.7
+)
+# final_tree
+}
+```
+
+```{r}
+#mytree + geom_text(aes(label = node), hjust = -0.3, size = 3, color = "blue")
+```
+
+## Bats Tree (only based on host genetic distances)
+```{r}
+# HOSTDISTANCE
+string <- "0.1330729301599102 0.5864549232257497 0.32966859043837854 2.585794287635929E-4 0.5292814697468534 0.004143321225103507 0.7034000922550243 0.2879533088826709 0.30888975761753973 0.027337647555074306 0.09952629530226544 0.2597886911241426 0.11448627008637044 -0.4828275027738522 -0.15979254856104821 0.7244124396688911 0.8643423101713874 0.6332111275364383 0.3399996390213292 0.8126963598716884 -0.5295309620909956 0.9702988825016736 0.5958697427829477 0.6146035834170713 0.3639560946040993 0.42795171699111795 0.5706918387447398 -0.3962108769793469 -0.08261009016456665 0.19896724625063783 0.9893811907410366 -2.2341121349831057 -0.7246728857159753 -0.05470983796255145 0.7659632461481133 -4.952978049016043 -0.35611174180961996 0.7865064139593599 0.5516565316376295 0.6114900934189428 0.7452660306482283 0.8500928795000144 0.13677528965624972 0.3978228825750161 0.4610469407291312 -1.150145501363983 -0.3827796651193414 0.5260701737584673 -1.9206888332534708 -0.7246728857159753 0.5484711780346202 0.2914537641275834 0.35713258410616305 0.5034858745991059 0.6177135652567126 -0.16804400041854886 0.121935960413656 0.191722862588758 -0.24343860404619955 0.22058700632508127 -0.5389672399681408 -0.5674711964664754 0.24559787019499832 -0.042838384862891335 0.031184489419119343 0.19534743118667336 0.3227596792197974 -0.5674711964664754 -0.23495900109202666 -0.15567605474705173 0.7124249785212807 0.09201579110164597 -1.8973966394085298 0.7333689924411966 0.4937500317332618 0.5548382133624731 0.691320823126153 0.7981770807794666 0.06936087383838746 0.3365602509243595 0.40118681789777005 0.875689124057905 0.4872403386434366 0.5067235390063222 0.24559787019499832 0.3123637776994112 0.4610469407291312 -0.8015611051493662 -0.22228824315198434 0.07314963022007819 0.8954344920021259 -0.1929474047655902 0.8954344920021259 0.6700540584366876 0.727401187758072 0.8558014825497923 0.9565874355723072 0.2739069244166101 0.5228551371798494 0.5833094999899943 0.5099574100155907 0.24915242135035714 0.3158334306901483 0.4643347417023649 0.5801604881359642 -0.21807755035874613 0.07693319296562205 0.14785266341735692 -2.637834373374443 -2.4521287276266084 -3.5524160509003253 0.5990008929663515 -0.5770383068794052 -0.24343860404619955 0.9150396075445031 -4.500901771110683 -2.7831367944122154 0.3468655843296725 -0.9731182090561851 -0.5914514393217515 0.691320823126153 -2.5877402834522147 0.4112540944350217 -0.8699753067537476 -0.5014141628473923 0.748232294867805 0.5548382133624731 -0.644953016654826 -0.3035366552343514 0.875689124057905 -0.10271293642821007 0.18082051033334226 0.9757644458533032 -1.3583232742959948 0.298441384544917 0.5452821440684552 0.1330729301599102 0.5864549232257497 0.32966859043837854 2.585794287635929E-4 0.5292814697468534"
+string <- paste0(string, " ", "0.004143321225103507 0.7034000922550243 0.2879533088826709 0.30888975761753973 0.027337647555074306 0.09952629530226544 0.2597886911241426 0.11448627008637044 -0.4828275027738522 -0.15979254856104821 0.7244124396688911 0.8643423101713874 0.6332111275364383 0.3399996390213292 0.8126963598716884 -0.5295309620909956 0.9702988825016736 0.5958697427829477 0.6146035834170713 0.3639560946040993 0.42795171699111795 0.5706918387447398 -0.3962108769793469 -0.08261009016456665 0.19896724625063783 0.9893811907410366 -2.2341121349831057 -0.7246728857159753 -0.05470983796255145 0.7659632461481133 -4.952978049016043 -0.35611174180961996 0.7865064139593599 0.5516565316376295 0.6114900934189428 0.7452660306482283 0.8500928795000144 0.13677528965624972 0.3978228825750161 0.4610469407291312 -1.150145501363983 -0.3827796651193414 0.5260701737584673 -1.9206888332534708 -0.7246728857159753 0.5484711780346202 0.2914537641275834 0.35713258410616305 0.5034858745991059 0.6177135652567126 -0.16804400041854886 0.121935960413656 0.191722862588758 -0.24343860404619955 0.22058700632508127 -0.5389672399681408 -0.5674711964664754 0.24559787019499832 -0.042838384862891335 0.031184489419119343 0.19534743118667336 0.3227596792197974 -0.5674711964664754 -0.23495900109202666 -0.15567605474705173 0.7124249785212807 0.09201579110164597 -1.8973966394085298 0.7333689924411966 0.4937500317332618 0.5548382133624731 0.691320823126153 0.7981770807794666 0.06936087383838746 0.3365602509243595 0.40118681789777005 0.875689124057905 0.4872403386434366 0.5067235390063222 0.24559787019499832 0.3123637776994112 0.4610469407291312 -0.8015611051493662 -0.22228824315198434 0.07314963022007819 0.8954344920021259 -0.1929474047655902 0.8954344920021259 0.6700540584366876 0.727401187758072 0.8558014825497923 0.9565874355723072 0.2739069244166101 0.5228551371798494 0.5833094999899943 0.5099574100155907 0.24915242135035714 0.3158334306901483 0.4643347417023649 0.5801604881359642 -0.21807755035874613 0.07693319296562205 0.14785266341735692 -2.637834373374443 -2.4521287276266084 -3.5524160509003253 0.5990008929663515 -0.5770383068794052 -0.24343860404619955 0.9150396075445031 -4.500901771110683 -2.7831367944122154 0.3468655843296725 -0.9731182090561851 -0.5914514393217515 0.691320823126153 -2.5877402834522147 0.4112540944350217 -0.8699753067537476 -0.5014141628473923 0.748232294867805 0.5548382133624731 -0.644953016654826 -0.3035366552343514 0.875689124057905 -0.10271293642821007 0.18082051033334226 0.9757644458533032 -1.3583232742959948 0.298441384544917 0.5452821440684552")
+
+pred <- as.numeric(strsplit(string, " ")[[1]]) 
+# pred
+```
+
+```{r}
+legend_labels <- sapply(general_info_new, function(x) x$nickname)
+colors_palette <- sapply(general_info_new, function(x) x$color)
+
+
+dist_matrix_raw <- getQ(exp(pred))
+diag(dist_matrix_raw) <- 0 # Set diagonal to 0
+state_names <- sort(names(bat_species_names))
+# Assign row and column names
+colnames(dist_matrix_raw) <- state_names
+rownames(dist_matrix_raw) <- state_names
+
+# Convert the matrix to a 'dist' object
+d_object <- as.dist(dist_matrix_raw)
+```
+
+```{r}
+# Now convert to a dist object
+dist_object <- as.dist(dist_matrix_raw)
+hc_tree <- hclust(dist_object, method = "ward.D2")
+bat_species_df <- bat_species_df[match(hc_tree$labels, bat_species_df$code), ]
+
+# Convert hclust object to phylo object
+phylo_tree <- as.phylo(hc_tree)
+
+# Adjust branch lengths for a more compact visualization
+branch_length_scale_factor <- 0.1
+phylo_tree$edge.length <- phylo_tree$edge.length * branch_length_scale_factor
+
+# Create the ggtree object
+p <- ggtree(phylo_tree, size = 0.35)
+
+# Join the ggtree data with your external data
+p_data <- p$data
+p_data <- full_join(p_data, bat_species_df, by = c("label" = "code"))
+
+# Update the ggtree data with the joined data
+p_data <- p$data
+p_data <- dplyr::full_join(p_data, bat_species_df, by = c("label" = "code"))
+
+p_data$letter <- factor(
+  p_data$letter ,
+  levels = sort(unique(p_data$letter))
+)
+p$data <- p_data
+
+# The plotting part with your customizations
+p_annotated <- p +
+  # geom_tree(size = 0.01) +
+  # Use aes() to map the 'letter' column from your joined data to color
+  geom_tippoint(aes(color = letter), size = 3.5) +
+  geom_tiplab(
+    # aes(color = letter), # You can color the tip labels too
+    size = 3,
+    offset = -0.06,
+    align = FALSE,
+    show.legend = FALSE
+  ) +
+  # Adjust xlim to make space for labels and points
+  # xlim(NA, max(p$data$x) * 1.5) +
+  scale_color_manual(
+    values = colors_palette,
+    labels = legend_labels,
+    na.value = "transparent"
+  ) +
+  # labs(color = "Genus") + # Add a label for the legend
+  # theme_tree2() + # Use a clean theme
+  # ggtitle("Hierarchical Clustering with Bat Species Annotations") +
+  theme(
+  legend.position = "none",
+  legend.title = element_blank(),
+  legend.background = element_rect(fill = "transparent", color = NA), # Transparent legend background
+  # legend.key.size = unit(0.5, "cm"), # Adjust legend key size,
+  # plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+  # plot.subtitle = element_text(hjust = 0.5, size = 10, color = "grey50"),
+  panel.background = element_rect(fill = NA, colour = NA),
+  plot.background = element_rect(fill = NA, colour = NA),
+  # legend.title = element_text(size = 12),
+  # legend.text = element_text(size = 10)
+)
+# p + geom_text(aes(label = node), hjust = -0.3, size = 3, color = "blue") # to see node numbers
+flipped_p <- p_annotated |> flip(19,20) |> flip(5,30) |> flip(21,22)
+flipped_p <- flipped_p +  scale_x_reverse() + theme(legend.position="none", plot.margin = unit(c(0,0,0,0.3), "cm"))
+# flipped_p + geom_text(aes(label = node), hjust = -0.3, size = 3, color = "blue") |> print()
+# Print the final plot
+# print(p_annotated)
+```
+
+
+## Final Combined Figure
+
+```{r}
+
+if (horizonal) {
+combined <- plot_grid(
+  final_tree + theme(plot.margin = unit(c(0.2,-0.8,0,-0), "cm")) ,
+  flipped_p,
+  rel_widths = c(3,  1),
+  nrow = 1
+)
+combined
+}
+```
+
+```{r}
+gg_record(device = "pdf",width = 6.5, height = 4, units = "in", dpi = 300)   
+print(combined)
+gg_stop_recording()
+if (save_plots)
+  ggsave(paste0(output_figures_path, "rabiesTree.pdf"), combined, width = 6.5, 
+         height = 4, units = "in", dpi = 300)
+```
+
+
+## Map for bat species distribution (not used)
+
+```{r}
+# bat_data <- mytree$data |> dplyr::select(isTip, state, host) |> 
+#   dplyr::filter(isTip) |> 
+#   dplyr::select(-isTip) |>
+#   dplyr::mutate(host = ifelse(host == "Mc+Ml", "Mc", host))  |> 
+#   rename(states = state) 
+# 
+# bat_data$states <- tolower(bat_data$states)
+# bat_data$states <- str_replace_all(bat_data$states, " ", "_")
+# 
+# # Get a list of all unique bat species
+# all_species <- unique(bat_data$host)
+# 
+# # Calculate the count of each species per state and pivot to wide format
+# bat_species_counts_wide <- bat_data %>%
+#   group_by(states, host) %>%
+#   summarise(count = n(), .groups = 'drop') %>%
+#   pivot_wider(names_from = host, values_from = count, values_fill = 0)
+# species_cols <- names(bat_species_counts_wide)[-1] 
+# bat_species_counts_wide <- bat_species_counts_wide |> rowwise() %>% 
+# mutate(
+#     majority_species = {
+#       species_cols <- names(bat_species_counts_wide)[-1] # Get names of species columns
+#       counts <- c_across(all_of(species_cols))
+#       species_cols[which.max(counts)]
+#     }
+#   ) %>%
+#   ungroup() 
+# 
+# us_states_map <- map_data("state") %>%
+#   rename(states = region)
+# 
+# state_centroids <- us_states_map %>%
+#   group_by(states) %>%
+#   summarise(
+#     long = mean(long), # Simple mean of longitudes for centroid
+#     lat = mean(lat),   # Simple mean of latitudes for centroid
+#     .groups = 'drop'
+#   )
+# 
+# us_states_map <- us_states_map |> left_join(bat_species_counts_wide[c("states", "majority_species")]) |> 
+#    mutate(across(c( majority_species), ~replace_na(., "Not Available")))
+# 
+# scatterpie_data <- state_centroids %>%
+#   left_join(bat_species_counts_wide, by = "states")
+# 
+# scatterpie_data <- scatterpie_data %>%
+#   mutate(across(-c(states, majority_species), ~replace_na(., 0)))
+
+# scatterpie_data
+```
+
+
+```{r}
+# Filter out states that have no bat species at all if you don't want empty pie charts
+# This creates a 'total_species_in_state' to help manage radius or filter
+# species_cols <- colnames(scatterpie_data)[colnames(scatterpie_data) %in% all_species]
+# 
+# scatterpie_data_present <- scatterpie_data %>%
+#   rowwise() %>%
+#   mutate(total_species_in_state = sum(c_across(all_of(species_cols)))) %>%
+#   ungroup() %>%
+#   filter(total_species_in_state > 0) # Only include states with at least one species
+# 
+# majority_species_df <- scatterpie_data_present %>%
+#   dplyr::select(states, all_of(all_species)) %>%
+#   rowwise() %>% # Treat each row as a separate group
+#   # Use 'all_species' to select the columns for finding the maximum
+#   mutate(majority_species = names(.)[which.max(c_across(all_of(all_species)))]) %>%
+#   ungroup()
+# # scatterpie_data_present
+# species_colors <- sapply(general_info, function(x) x$color)
+# species_colors <-  c(species_colors, "Not Available" = "#FFFFFF00")
+```
+
+
+```{r}
+# library(scatterpie)
+# # Create the map
+# maps_bats_counts <- ggplot(us_states_map, aes(x = long, y = lat, group = group)) +
+#   geom_polygon(aes(fill = majority_species), alpha=0.7, linewidth = 0.3, color="black") +
+#   geom_scatterpie(
+#     data = scatterpie_data_present,
+#     aes(x = long, y = lat, r = sqrt(total_species_in_state)/2), 
+#     cols = all_species, 
+#     color = "black",
+#     linewidth = 0.3   
+#   ) +
+#   scale_fill_manual(
+#     values = species_colors,
+#     name = "Bat Species"
+#   ) +
+#   coord_map() + 
+#   theme_void() +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12),
+#     legend.position = "none"
+#   ) 
+# 
+# maps_bats_counts
+```
+
+```{r}
+# final <- ggdraw() + draw_plot(combined) + draw_plot(maps_bats_counts, x = -0.0, y = 0.62, width = 0.42, height = 0.42) 
+# final
+# gg_record(device = "pdf", width = 6.5, height = 4, units = "in", dpi = 300)
+# rabiesTreeWithMap <- ggdraw() + draw_plot(combined) + draw_plot(maps_bats_counts, x = 0.01, y = 0.61, width = 0.42, height = 0.42) 
+# print(rabiesTreeWithMap)
+# gg_stop_recording()
+#ggsave(paste0(output_figures_path, "rabiesTreeWithMap.pdf"), rabiesTreeWithMap, width = 6.5, height = 4, units = "in", dpi = 300)
+```
+
+# PREDICTORS PLOTS
+```{r}
+simulation = "off"
+jobsAttributes <- list("mana" = "Glm", "predictorName" = c("HostDistance"))
+additionalAttributes <- list("nstates" = as.vector(17))
+additionalAttributes$dataType = "RealData"
+additionalAttributes$tree = "rabies"
+```
+
+### LL Model 
+```{r}
+path_to_log <- fs::path(input_path, paste0(xmlNameLL, ".log"))
+jobsAttributes$mana <- "Glm"
+# for (r_file in r_files) source(r_file)
+PJL <- AnalyserFromLog$new(project = "NPRates", path = path_to_log,
+                          jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.5, thinning = 1, burnOut = 1,
+                          plottingFlags = list(plottingLogRates = TRUE),#, plottingRatesLogRates=TRUE),
+                          actions = list(normalize=FALSE, exponentiate = FALSE, simulation = "on",
+                                         publicationQuality = TRUE, addClockRate = FALSE))
+
+# mcmcEval <- PJL$mcmc(1)
+# ll_hostModel <- PJL$getData(1) |> dplyr::select(starts_with("host.model"))
+# p <- PJL$plotter()
+# print(mcmcEval$ESSSorted())
+summ_data_LL <- createPlottingDataLogRates(PJL$getDataToPlot(), addPredictor = TRUE, addTrueline = TRUE)
+
+```
+
+```{r}
+# for (r_file in r_files) source(r_file)
+# input_path <- "/Users/filippomonti/Desktop/try_download"
+# simulation = "off"
+# jobsAttributes <- list(
+#   "mana" = "Glm", # "Glm", "Gp"
+#   "kernel" = c("E"), 
+#   "predictorName" = c("HostDistance"),
+#   "operator_logRates" = c("HMC"),
+#   "scale_shape" = c(1), "scale_scale" = c(1), 
+#   "length_shape" = c(1), "length_scale" = c(1)
+# )
+# 
+# additionalAttributes <- list("nstates" = as.vector(17))
+# additionalAttributes$dataType = "RealData"
+# additionalAttributes$tree = "rabies"
+# xmlName <- paste0("","", "nprRandomTreeGlmHostDistance2", "")
+# xmlName <- 
+# xmlName <- "rabies_LL"
+
+
+# path_to_xml <- file.path(input_path, xmlName)
+# PJL <- AnalyserJobsList$new(project = "NPRates", path = path_to_xml,
+#                           jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+#                           burnIn = 0.1, thinning = 1, burnOut = 1,
+#                           plottingFlags = list(plottingLogRates = TRUE, plottingDerivatives = FALSE),
+#                           actions = list(normalize=FALSE, exponentiate=FALSE, 
+#                                          simulation = simulation, useInput = FALSE,
+#                                          publicationQuality = TRUE, 
+#                                          centerData = FALSE, addClockRate = FALSE))
+
+# summ_data_LL <- createPlottingDataLogRates(PJL$getDataToPlot(), addPredictor = TRUE, addTrueline = FALSE)
+```
+
+### GP model 
+```{r}
+for (r_file in r_files) source(r_file)
+
+path_to_log <- fs::path(input_path, paste0(xmlNameGP, ".log"))
+simulation = "off"
+jobsAttributes <- list("mana" = "Gp", "predictorName" = c("HostDistance"))
+additionalAttributes <- list("nstates" = as.vector(17), dataType = "RealData", 
+                            tree = "rabies")
+
+PJL <- AnalyserFromLog$new(project = "NPRates", path = path_to_log,
+                          jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.1, thinning = 1, burnOut = 1,
+                          plottingFlags = list(plottingLogRates = TRUE, plottingDerivatives = FALSE),
+                          actions = list(normalize=FALSE, exponentiate=FALSE, 
+                                         simulation = simulation, useInput = FALSE,
+                                         publicationQuality = TRUE, 
+                                         centerData = FALSE, addClockRate = FALSE))
+
+summ_data_GP <- createPlottingDataLogRates(PJL$getDataToPlot(), addPredictor = TRUE, addTrueline = FALSE)
+```
+
+```{r}
+linesize = 0.5
+summ_data_GP <- summ_data_GP %>%
+ mutate(
+   lowHPD = predict(gam(q05 ~ s(predictor, bs = "cs")), newdata = summ_data_GP),
+   highHPD = predict(gam(q95 ~ s(predictor, bs = "cs")), newdata = summ_data_GP)
+ )
+myplot <- ggplot(summ_data_LL, aes(x = predictor)) +
+  geom_ribbon(data = summ_data_GP, aes(ymin = lowHPD, ymax = highHPD), alpha = 0.5, fill = "darkgoldenrod1") +
+  geom_line(data = summ_data_GP, aes(y = median, color = "b"), size = linesize) +
+
+  geom_ribbon(aes(ymin = q05, ymax = q95), alpha = 0.5, fill = "#94CBEc") +
+  geom_line(aes(y = median, color = "a"), size = linesize) +
+  
+  labs(x = "Host genetic distance", y = "Log rates") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(
+     name = "Legend",
+     values = c("a" = "#2F67B1", "b" = "#F8766D"),
+     labels = c("LL", "GP")
+   ) 
+  
+final_plot <- publicationQualitySettings(myplot) + theme(legend.position = c(1, 0.84), legend.justification = c(1, 1)) 
+final_plot
+
+gg_record(device = "pdf", width = 3, height = 2.5, units = "in", dpi = 300)   
+print(final_plot)
+gg_stop_recording()
+```
+
+```{r}
+if (save_plots) {
+  ggsave(
+    filename = paste0(output_figures_path, "rabiesLogRates", ".pdf"),
+    plot = final_plot,
+    width = 3, height = 2.5, dpi = 300
+  )
+}
+
+```
+
+
+

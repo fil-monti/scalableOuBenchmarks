@@ -1,0 +1,378 @@
+---
+title: "OU Benchmark Figures"
+author: "Filippo Monti"
+format:
+  html:
+    toc: true
+    df-print: paged
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+options(stringsAsFactors = FALSE)
+
+required_packages <- c(
+  "dplyr", "forcats", "fs", "ggplot2", "patchwork", "readr",
+  "scales", "stringr", "tibble", "tidyr"
+)
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+if (length(missing_packages) > 0L) {
+  stop(
+    "Install missing packages before rendering: ",
+    paste(missing_packages, collapse = ", "),
+    call. = FALSE
+  )
+}
+
+suppressPackageStartupMessages({
+  lapply(required_packages, library, character.only = TRUE)
+})
+
+input_file <- knitr::current_input()
+input_dir <- if (is.null(input_file)) {
+  getwd()
+} else {
+  dirname(normalizePath(input_file, mustWork = TRUE))
+}
+
+benchmark_root <- fs::path_norm(fs::path(input_dir, "..", "..", ".."))
+if (!fs::dir_exists(fs::path(benchmark_root, "benchmarks")) ||
+    !fs::dir_exists(fs::path(benchmark_root, "code"))) {
+  stop("Could not locate scalableOuBenchmarks root from ", input_dir, call. = FALSE)
+}
+workspace_root <- fs::path_dir(benchmark_root)
+benchmark_data_path <- fs::path(benchmark_root, "benchmarks")
+benchmark_figure_path <- fs::path(benchmark_root, "figures")
+paper_figure_path <- Sys.getenv(
+  "OU_PAPER_FIGS",
+  fs::path(workspace_root, "stableMatricesOU", "figures")
+)
+
+fs::dir_create(c(benchmark_figure_path, paper_figure_path))
+
+read_benchmark_csv <- function(filename) {
+  readr::read_csv(fs::path(benchmark_data_path, filename), show_col_types = FALSE)
+}
+
+save_benchmark_plot <- function(plot, filename, width, height) {
+  paths <- c(
+    fs::path(benchmark_figure_path, filename),
+    fs::path(paper_figure_path, filename)
+  )
+  for (path in paths) {
+    ggplot2::ggsave(path, plot = plot, width = width, height = height, dpi = 300)
+  }
+  invisible(paths)
+}
+
+save_benchmark_pair <- function(plot, basename, width, height) {
+  save_benchmark_plot(plot, paste0(basename, ".pdf"), width, height)
+  save_benchmark_plot(plot, paste0(basename, ".png"), width, height)
+}
+
+paper_theme <- function(base_size = 9) {
+  theme_classic(base_size = base_size, base_family = "serif") +
+    theme(
+      axis.line = element_line(linewidth = 0.3),
+      axis.ticks = element_line(linewidth = 0.3),
+      axis.text = element_text(color = "black"),
+      legend.position = "bottom",
+      legend.title = element_blank(),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.35),
+      strip.background = element_rect(fill = "grey93", color = "black", linewidth = 0.3),
+      strip.text = element_text(face = "bold"),
+      plot.title = element_text(face = "bold", hjust = 0),
+      plot.subtitle = element_text(color = "grey25")
+    )
+}
+
+kernel_colors <- c(
+  "SMBP + rotation" = "#2F67B1",
+  "SMBP block" = "#2F67B1",
+  "Dense" = "#D4960A",
+  "Known Schur" = "#9B4356",
+  "Schur Parlett" = "#D67C2F"
+)
+
+kernel_alpha <- c(
+  "SMBP + rotation" = 1,
+  "SMBP block" = 0.6,
+  "Dense" = 1,
+  "Known Schur" = 1,
+  "Schur Parlett" = 1
+)
+
+kernel_linetypes <- c(
+  "SMBP + rotation" = "solid",
+  "SMBP block" = "solid",
+  "Dense" = "longdash",
+  "Known Schur" = "longdash",
+  "Schur Parlett" = "longdash"
+)
+```
+
+# Julia Kernel Benchmarks
+
+The kernel panels read the precomputed CSV files in `benchmarks/`. The current
+figure filters those files to `K = 4, 8, 16, 32, 64`; no Julia benchmarks are run
+by this document.
+
+```{r kernel-data}
+schur_smbp <- read_benchmark_csv("schur_vs_smbp_exp_adjoint_results.csv")
+edge_push <- read_benchmark_csv("edge_message_push_results.csv")
+lyapunov <- read_benchmark_csv("lyapunov_stationary_variance_results.csv")
+branch_lyapunov <- read_benchmark_csv("branch_likelihood_with_lyapunov_results.csv")
+
+keep_k <- c(4L, 8L, 16L, 32L, 64L)
+
+kernel_timings <- bind_rows(
+  schur_smbp %>%
+    filter(K %in% keep_k) %>%
+    transmute(
+      K,
+      benchmark = "Matrix exponential",
+      Dense = dense_exp_ms,
+      `Known Schur` = schur_exp_ms,
+      `Schur Parlett` = schur_parlett_exp_ms,
+      `SMBP block` = smbp_block_exp_ms,
+      `SMBP + rotation` = smbp_exp_with_rotation_ms
+    ),
+  schur_smbp %>%
+    filter(K %in% keep_k) %>%
+    transmute(
+      K,
+      benchmark = "Frechet adjoint",
+      Dense = dense_adj_ms,
+      `Known Schur` = schur_adj_ms,
+      `SMBP block` = smbp_adj_apply_ms,
+      `SMBP + rotation` = smbp_adj_with_rotation_ms
+    ),
+  lyapunov %>%
+    filter(K %in% keep_k) %>%
+    transmute(
+      K,
+      benchmark = "Stationary covariance",
+      Dense = dense_lyap_ms,
+      `Known Schur` = schur_known_lyap_ms,
+      `SMBP + rotation` = smbp_rotation_lyap_ms
+    ),
+  edge_push %>%
+    filter(K %in% keep_k) %>%
+    transmute(
+      K,
+      benchmark = "Full edge message",
+      Dense = dense_full_edge_ms,
+      `Known Schur` = schur_known_basis_full_edge_ms,
+      `SMBP block` = smbp_block_full_edge_ms,
+      `SMBP + rotation` = smbp_full_edge_with_rotation_ms
+    ),
+  branch_lyapunov %>%
+    filter(K %in% keep_k) %>%
+    transmute(
+      K,
+      benchmark = "Branch + Lyapunov",
+      Dense = dense_branch_lyap_ms,
+      `Known Schur` = schur_branch_lyap_ms,
+      `SMBP + rotation` = smbp_branch_lyap_rotation_ms
+    )
+) %>%
+  pivot_longer(
+    cols = -c(K, benchmark),
+    names_to = "method",
+    values_to = "milliseconds",
+    values_drop_na = TRUE
+  ) %>%
+  filter(milliseconds > 0) %>%
+  mutate(
+    method = factor(method, levels = names(kernel_colors)),
+    benchmark = factor(
+      benchmark,
+      levels = c(
+        "Matrix exponential", "Frechet adjoint",
+        "Stationary covariance", "Full edge message",
+        "Branch + Lyapunov"
+      )
+    )
+  )
+```
+
+```{r kernel-figure, fig.width=9.2, fig.height=5.4}
+kernel_fig <- ggplot(
+  kernel_timings,
+  aes(
+    x = K,
+    y = milliseconds,
+    color = method,
+    alpha = method,
+    linetype = method,
+    group = method
+  )
+) +
+  geom_line(linewidth = 0.55) +
+  geom_point(size = 1.8) +
+  facet_wrap(~ benchmark, scales = "free_y", ncol = 3) +
+  scale_x_continuous(
+    trans = "log2",
+    breaks = keep_k,
+    labels = keep_k,
+    minor_breaks = NULL
+  ) +
+  scale_y_log10(
+    labels = scales::label_scientific(digits = 1),
+    minor_breaks = NULL
+  ) +
+  scale_color_manual(values = kernel_colors, drop = TRUE) +
+  scale_alpha_manual(values = kernel_alpha, drop = TRUE) +
+  scale_linetype_manual(values = kernel_linetypes, drop = TRUE) +
+  labs(
+    x = "State dimension K",
+    y = "Median time per call (ms)",
+    title = "OU kernel microbenchmarks"
+  ) +
+  paper_theme()
+
+kernel_fig
+```
+
+```{r kernel-save}
+save_benchmark_pair(kernel_fig, "ou_kernel_benchmarks", width = 9.2, height = 5.4)
+```
+
+# Time-Series Benchmarks
+
+These timings are the historical BEAST-vs-Stan summaries recorded in
+`benchmarking.md`. They should be replaced by regenerated CSV output before the
+final paper figures are locked.
+
+```{r time-series-data}
+time_series_summary <- read_benchmark_csv("time_series_summary.csv")
+
+beast_stan_summary <- time_series_summary %>%
+  filter(comparison == "beast_stan") %>%
+  mutate(
+    scenario = factor(scenario, levels = unique(scenario)),
+    operation = factor(operation, levels = c("Log likelihood", "Gradient")),
+    method = factor(method, levels = c("Stan", "BEAST"))
+  )
+
+beast_cache_summary <- time_series_summary %>%
+  filter(comparison == "beast_grid") %>%
+  mutate(
+    scenario = factor(grid, levels = c("Uniform grid", "Irregular grid")),
+    operation = factor(operation, levels = c("Log likelihood", "Gradient"))
+  )
+```
+
+```{r time-series-figure, fig.width=8.4, fig.height=4}
+method_colors <- c("Stan" = "#7b5f95", "BEAST" = "#2f6f73")
+grid_colors <- c("Uniform grid" = "#2f6f73", "Irregular grid" = "#b15c3b")
+
+beast_stan_fig <- ggplot(
+  beast_stan_summary,
+  aes(x = operation, y = milliseconds, color = method, shape = method)
+) +
+  geom_point(position = position_dodge(width = 0.45), size = 2.6) +
+  facet_wrap(~ scenario, nrow = 1) +
+  scale_y_log10(labels = scales::label_number()) +
+  scale_color_manual(values = method_colors) +
+  labs(x = NULL, y = "Median time (ms)", title = "BEAST vs Stan") +
+  paper_theme() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+
+cache_fig <- ggplot(
+  beast_cache_summary,
+  aes(x = operation, y = milliseconds, color = scenario, shape = scenario)
+) +
+  geom_point(position = position_dodge(width = 0.45), size = 2.6) +
+  scale_y_log10(labels = scales::label_number()) +
+  scale_color_manual(values = grid_colors) +
+  labs(x = NULL, y = NULL, title = "BEAST grid cache") +
+  paper_theme() +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1))
+
+time_series_fig <- beast_stan_fig + cache_fig + plot_layout(widths = c(1.35, 1))
+time_series_fig
+```
+
+```{r time-series-save}
+save_benchmark_pair(time_series_fig, "ou_time_series_benchmarks", width = 8.4, height = 4)
+```
+
+# Tree Benchmarks
+
+The tree benchmark CSVs currently contain a smoke-test grid (`K = 2`, `N = 8`).
+The plotting code is set up to expand automatically once larger tree runs are
+written to the same `results_*.csv` files.
+
+```{r tree-data}
+tree_files <- fs::dir_ls(
+  fs::path(benchmark_data_path, "benchmarksTrees"),
+  regexp = "results_.*[.]csv$"
+)
+
+tree_timings <- bind_rows(lapply(tree_files, readr::read_csv, show_col_types = FALSE)) %>%
+  filter(status == "ok", median_sec > 0) %>%
+  mutate(
+    method_label = case_when(
+      package %in% c("PCMBase", "PCMBaseCpp") &
+        mode == "dense_PCMLik" ~ paste(package, "dense likelihood"),
+      package %in% c("PCMBase", "PCMBaseCpp") &
+        mode == "schur_PCMLik" ~ paste(package, "Schur likelihood"),
+      package == "mvMORPH" ~ "mvMORPH fixed OU",
+      package == "mvSLOUCH" ~ "mvSLOUCH fit proxy",
+      package == "PCMFit" ~ "PCMFit fit proxy",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(method_label)) %>%
+  group_by(package, K, N, method_label) %>%
+  summarize(median_sec = median(median_sec), .groups = "drop") %>%
+  mutate(
+    grid_label = paste0("K = ", K, ", N = ", N),
+    method_label = forcats::fct_reorder(method_label, median_sec)
+  )
+```
+
+```{r tree-figure, fig.width=7.2, fig.height=4.2}
+tree_fig <- ggplot(
+  tree_timings,
+  aes(x = median_sec, y = method_label, color = package, shape = package)
+) +
+  geom_point(size = 2.6) +
+  facet_wrap(~ grid_label, scales = "free_y") +
+  scale_x_log10(labels = scales::label_number()) +
+  scale_color_manual(
+    values = c(
+      "PCMBase" = "#0072B2",
+      "PCMBaseCpp" = "#56B4E9",
+      "mvMORPH" = "#009E73",
+      "mvSLOUCH" = "#E69F00",
+      "PCMFit" = "#CC79A7"
+    )
+  ) +
+  labs(
+    x = "Median time (s)",
+    y = NULL,
+    title = "Tree OU package benchmarks"
+  ) +
+  paper_theme() +
+  theme(legend.position = "none")
+
+tree_fig
+```
+
+```{r tree-save}
+save_benchmark_pair(tree_fig, "ou_tree_benchmarks", width = 7.2, height = 4.2)
+```
+
+# Output
+
+Figures are written to both:
+
+- `r benchmark_figure_path`
+- `r paper_figure_path`

@@ -1,0 +1,687 @@
+---
+title: "Plotting trees"
+format: pdf
+---
+```{r, setup, include=FALSE}
+# Stable, zero-edit setup for any machine
+set.seed(666)
+options(stringsAsFactors = FALSE)
+Sys.setlocale("LC_TIME", "C")
+
+# Load small helpers without hard-coded paths
+stopifnot(requireNamespace("fs", quietly = TRUE))
+stopifnot(requireNamespace("rprojroot", quietly = TRUE))
+
+# Resolve repo root and code dir; source libraries and paths
+root <- rprojroot::find_root(
+  rprojroot::has_file(".git") |
+    rprojroot::has_dir("code")
+)
+
+# Prefer R_code/, else code/R_code/
+R_path <- fs::path(root, "code", "R_code")
+sapply(fs::path(R_path, c("R_libraries.R", "R_paths.R")), source)
+r_files <- list.files(path = R_functions_path, pattern = "\\.R$", full.names = TRUE, recursive = TRUE)
+r_files <- append(r_files, list.files(path = R_classes_path, pattern = "\\.R$", full.names = TRUE))
+for (r_file in r_files) source(r_file)
+```
+
+<!-- ```{bash} -->
+<!-- XML="airCommunitiesGlmdonorPopDensity" -->
+<!-- MYPATH="/Users/filippomonti/Desktop/AdditiveGaussianProcesses/output/log" -->
+<!-- #MYPATH="/Users/filippomonti/Desktop/try_download" -->
+<!-- cp ${MYPATH}//${XML}.log /Users/filippomonti/Desktop/npCTMC/output/influenza_LL.log -->
+<!-- #ls /Users/filippomonti/Desktop/try_download/${XML}/Glm_E_HostDistance_HMC_1_1_1_1 -->
+<!-- #/Gp_E_HostDistance_HMC_1_1_1_1 -->
+<!-- #cp nprSimulationHostDistanceConvex2.log /Users/filippomonti/Desktop/npCTMC/output/simulation_GP.log -->
+<!-- ``` -->
+# Preliminaries
+### Parameters
+```{r}
+# params <- list(
+#   project_root = "/Users/filippomonti/Desktop/npCTMC", # e.g. "/path/to/flu-airco"
+#   input_path = "output",
+#   output_figures_path = "manuscript/inputs",
+#   xml = "code/xml",
+#   xml_name_gp = "influenza_GP",
+#   xml_name_ll = "influenza_LL",
+#   mcc_tree = "influenza_GP_output_mcc.tree",
+#   mcc_tree_rewards = "influenza_GP_output_mcc_rewards.tree",
+#   map = "influenza_world_map.xml",
+#   mrsd = "2006-12-30",
+#   hpd_nodes = c(820, 890, 877, 897, 898, 899, 919, 1565, 821, 831),
+#   save_plots = TRUE
+# )
+xmlNameGP <- "influenza_GP"
+xmlNameLL <- "influenza_LL"
+mcc_treeGP <- "influenza_GP_output_mcc.tree"
+mcc_tree_rewardsGP <- "influenza_GP_output_mcc_rewards.tree"
+influenza_map <- "influenza_world_map.xml"
+save_plots <- FALSE
+```
+
+
+```{r}
+g_record <- function(plot, width = 3, height = 2.5) {
+  showtext_auto()
+  gg_record(device = "pdf", width = width, height = height, units = "in", dpi = 300)   
+  print(plot)
+  gg_stop_recording()
+}
+```
+### Font Uploading
+```{r}
+fontSize <- 12
+fontSizeSmall <- 10
+fontType <- "CMU Serif"
+loadCmuSerif()
+```
+
+## Loading common dictionary
+```{r}
+# air_tbl <- tribble(
+#   ~ac_code, ~letter, ~region,                 ~color,
+#   "AC4",   "A",     "China",                "#025196",
+#   "AC13",  "B",     "Southeast Asia",      "#5DA899",
+#   "AC7",   "C",     "South & West Asia",   "#94CBEC",
+#   "AC8",   "D",     "Japan",               "#D1E5F0",
+#   "AC3",   "E",     "Taiwan",              "#2F67B1",
+#   "AC14",  "F",     "Korea",               "#4393C3",
+#   "AC6",   "G",     "Oceania",             "#337538",
+#   "AC1",   "H",     "Africa",              "#512888",
+#   "AC5",   "I",     "Russia",              "#9F4A96",
+#   "AC12",  "J",     "Europe",              "#C26A77",
+#   "AC2",   "K",     "USA",                 "#FDB338",
+#   "AC11",  "L",     "Canada",              "#6A4A3C",
+#   "AC9",   "M",     "Mexico",              "#ff0000",
+#   "AC10",  "N",     "South America",       "#ff7400",
+#   "Unassigned", "Z", "Unassigned Countries","grey90"
+# )
+# 
+# ac_levels <- air_tbl$letter
+# pal_air <- air_tbl |>
+#   filter(letter != "Z") |>
+#   select(letter, color) |>
+#   tibble::deframe()
+# 
+# lab_air <- air_tbl |>
+#   filter(letter != "Z") |>
+#   select(letter, region) |>
+#   tibble::deframe()
+```
+
+```{r}
+aircommunity_info <- list(
+  AC4  = list(letter = "A", region = "China",             color = "#025196"),  #9E0142
+  AC13 = list(letter = "B", region = "Southeast Asia",    color = "#5DA899"), 
+  AC7  = list(letter = "C", region = "South & West\n Asia", color = "#94CBEc"), ##E6AB02
+  AC8  = list(letter = "D", region = "Japan",             color = "#D1E5F0"),
+  AC3  = list(letter = "E", region = "Taiwan",            color = "#2F67B1"),
+  AC14 = list(letter = "F", region = "Korea",             color = "#4393C3"),
+  AC6  = list(letter = "G", region = "Oceania",           color = "#337538"),
+  
+  AC1  = list(letter = "H", region = "Africa",            color = "#512888"),
+  AC5  = list(letter = "I", region = "Russia",            color = "#9F4A96"),
+  AC12 = list(letter = "J", region = "Europe",            color = "#C26A77"),
+  
+  AC2  = list(letter = "K", region = "USA",               color = "#FDB338"),  # TODO: check Canada #2E2585 
+  AC11 = list(letter = "L", region = "Canada",            color = "#6A4A3C"),   #9F4A96.  #F46D43
+   AC9  = list(letter = "M", region = "Mexico",            color = "#ff0000"),
+   AC10 = list(letter = "N", region = "South America",     color = "#ff7400"),
+
+  Unassigned = list(letter = "Z", region = "Unassigned Countries", color = "grey90")
+)
+
+ac_to_letter <- sapply(aircommunity_info, function(x) x$letter)
+tree_aircommunity_legend_labels <- sapply(aircommunity_info, function(x) x$region)
+tree_aircommunity_colors_palette <- sapply(aircommunity_info, function(x) x$color)
+```
+
+# TREE 
+### Creation of the MCC tree with tree annotator and loading the new tree into R
+<!-- ```{bash} -->
+<!-- #cd "/Users/filippomonti/Desktop/try_download/aircoGp1totalSeatClockBound07515WithTree/Gp_E_totalSeats_HMC_1_1_1_1" -->
+<!-- #TreeAnnotator -burnin 100 -heights mean aircoGp1totalSeatClockBound07515WithTree.trees output_mcc.tree -->
+<!-- ``` -->
+
+<!-- ```{bash} -->
+<!-- XML="aircoGp1OriginPopDensityClockBound1New" -->
+<!-- cd "/Users/filippomonti/Desktop/try_download/${XML}/Gp_E_donorPopDensity_HMC_1_1_1_1" -->
+<!-- #TreeAnnotator -burnin 100 -heights median "${XML}.trees" output_mcc.tree -->
+<!-- ``` -->
+
+```{r}
+path_to_mcc_treeGP <- fs::path(input_path, mcc_treeGP)
+tree <- read.beast(path_to_mcc_treeGP)
+options(ignore.negative.edge=TRUE)
+tree_height <- max(node.depth.edgelength(as.phylo(tree))) |> print()
+cat("There are ", nrow(tree@data), "total nodes.\n")
+cat("There are ", sum(grepl("\\+", tree@data[["geo.states"]])), " nodes associated with more than one aircommunity.\n")
+cat("We retreive the first aircommunity for such states.\n") 
+tree@data <- tree@data |> mutate(geo.states = trimws(gsub("\\+.*", "", geo.states)))
+tree@data <- tree@data |> rename(aircommunity = geo.states)
+tree@data[["aircommunity"]] |> table()
+tree@data |> names()
+```
+
+### Plotting the tree
+```{r}
+#| warning: false
+#| message: false
+options(ignore.negative.edge=TRUE)
+most_recent_sampling_date <- as.Date("2006-12-30") # TODO change this
+mytree <- ggtree(tree, mrsd = most_recent_sampling_date, aes(color = aircommunity), size=0.5) +
+  theme_tree2() +
+  # scale_x_continuous(expand = expansion(mult = c(0.1, 0.1), add = c(0, 0))) + # Adjust mult and add as needed
+  scale_y_continuous(expand = expansion(mult = c(0.01, 0.01), add = c(0, 0))) +
+  coord_flip() +
+  scale_x_reverse(  # Reverse the axis to have time from top (old) to bottom (new)
+    # name = "Sampling Year",
+    labels = function(x) x,
+    breaks = scales::breaks_pretty(n = 4),
+    expand = expansion(mult = c(0, 0.01), add = c(0.4, 0.01))
+  ) +
+  scale_color_manual(
+    values = tree_aircommunity_colors_palette,
+    labels = tree_aircommunity_legend_labels,
+    na.value = "transparent"
+  ) +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80", linetype = "dashed"),
+    axis.title.x = element_blank(),        # Remove old x-axis title (now horizontal)
+    axis.text.x = element_blank(),         # Remove old x-axis ticks
+    axis.ticks.x = element_blank(),        # Remove old x-axis ticks
+    axis.title.y = element_text(),         # Show vertical axis title
+    axis.text.y = element_text(),          # Show vertical axis labels
+    axis.line.x = element_blank(),
+    legend.position = "none", 
+    axis.line.y = element_blank(),
+    axis.ticks.y = element_line(linewidth = 0.3),
+    panel.border = element_rect(color = "black", fill = NA)
+  ) +
+  ylab("") 
+mytree_with_HPDs <- addHPD_rectangles_background(mytree, mytree, nodes = c(820, 890, 877, 897, 898, 899, 919, 1565, 821, 831), 
+                             width = 5, reversedAxis = TRUE) 
+mytree_with_HPDs
+```
+
+```{r}
+#Plot with node numbers
+node_number_tree <- mytree + geom_text(aes(label = node), hjust = -0.3, size = 0.5, color = "blue")
+# g_record(node_number_tree, width = 6.5, height = 4.5)
+```
+
+# MAP 
+### Parsing data
+```{r}
+# 1. Load the XML file
+AIRCO_XML <- fs::path(code_path, "xml", "influenza", influenza_map)
+stopifnot(file.exists(AIRCO_XML))
+
+xml_data <- read_xml(AIRCO_XML)
+
+# 2. Parse the XML data
+parsed_data <- xml_data %>%
+  xml_find_all("//taxon") %>% # Find all 'taxon' nodes
+  map_df(~ {
+    taxon_id <- xml_attr(., "id") # Get the 'id' attribute of the taxon
+    attrs <- xml_find_all(., ".//attr") # Find all 'attr' children within the taxon
+
+    # Extract all attribute names and values
+    attr_names <- xml_attr(attrs, "name")
+    attr_values <- xml_text(attrs)
+
+    # Create a named list for the current taxon's attributes
+    current_taxon_data <- setNames(as.list(attr_values), attr_names)
+
+    # Add the taxon ID
+    current_taxon_data$id <- taxon_id
+
+    # For latlong, split it into separate lat and long columns if it exists
+    if ("latlong" %in% names(current_taxon_data)) {
+      latlong_split <- unlist(strsplit(current_taxon_data$latlong, " "))
+      # Ensure there are two parts (latitude and longitude)
+      if (length(latlong_split) == 2) {
+        current_taxon_data$latitude_val <- as.numeric(latlong_split[1])
+        current_taxon_data$longitude_val <- as.numeric(latlong_split[2])
+      } else {
+        stop("should not get here")
+        current_taxon_data$latitude_val <- NA
+        current_taxon_data$longitude_val <- NA
+      }
+    } else {
+     stop("should not get here")
+      current_taxon_data$latitude_val <- as.numeric(current_taxon_data$latitude) # Fallback to 'latitude' if 'latlong' isn't present
+      # We need a 'longitude' from somewhere if latlong isn't there, this might be a problem
+      # For now, if latlong isn't there, longitude_val will be NA
+      current_taxon_data$longitude_val <- NA # Placeholder, adjust if you have another source for longitude
+    }
+
+    # Select and return only the relevant columns for our map
+    # Make sure to include 'continent' or 'generalLocation' for coloring
+    data.frame(
+      id = current_taxon_data$id,
+      generalLocation = current_taxon_data$generalLocation,
+      continent = current_taxon_data$continent,
+      latitude = current_taxon_data$latitude_val, # Use the parsed latitude
+      longitude = current_taxon_data$longitude_val, # Use the parsed longitude
+      aircommunity = current_taxon_data$locationNoAmbi,
+      stringsAsFactors = FALSE
+    )
+  })
+
+parsed_data$generalLocation <- recode(parsed_data$generalLocation,
+  "USA" = "United States of America",
+  "Czech Republic" = "Czechia",
+  "French Guiana" = "Guyana",
+  "Solomon Islands" = "Solomon Is."
+)
+parsed_data <- parsed_data %>%
+  mutate(generalLocation = tolower(generalLocation))
+parsed_data$aircommunity[parsed_data$generalLocation == "south korea"] <- "AC14"
+parsed_data$aircommunity[parsed_data$generalLocation == "taiwan"] <- "AC3"
+parsed_data$aircommunity[parsed_data$generalLocation == "canada"] <- "AC11"
+parsed_data$aircommunity[parsed_data$generalLocation == "Canada"] <- "AC11"
+```
+
+### Cleaning based on dictionary values
+```{r}
+if (any(parsed_data$aircommunity %in% names(ac_to_letter))) {
+  parsed_data$aircommunity <- ac_to_letter[parsed_data$aircommunity]
+}
+aircommunity_info_new <- setNames(
+  lapply(aircommunity_info, function(x) list(region = x$region, color = x$color)),
+  sapply(aircommunity_info, function(x) x$letter)
+)
+
+aircommunity_legend_labels <- sapply(aircommunity_info_new, function(x) x$region)
+aircommunity_colors_palette <- sapply(aircommunity_info_new, function(x) x$color) 
+```
+
+#### This completes the dictionary with the coordinates for each community; currently not used
+```{r}
+# Define your region_coords_and_nudges as a list of lists
+region_coords_and_nudges_list <- list(
+  "China"             = list(lon = 105, lat = 33, nudge_x = -11,   nudge_y = 6, hjust = 0),
+  "Southeast Asia"    = list(lon = 100, lat = 10, nudge_x = 2,   nudge_y = -5, hjust = 0.5),
+  "W. & S. Asia" = list(lon = 78,  lat = 23, nudge_x = 1.6,   nudge_y = -8, hjust = 0.5),
+  "Japan"             = list(lon = 138, lat = 36, nudge_x = 3,   nudge_y = -5, hjust = 0.5),
+  "Taiwan"            = list(lon = 121, lat = 24, nudge_x = -10,   nudge_y = -5, hjust = 0),
+  "Korea"             = list(lon = 130, lat = 38,nudge_x = 3,   nudge_y = 6, hjust = 0.5),
+  "Oceania"           = list(lon = 135, lat = -25, nudge_x = 3,   nudge_y = 0.5, hjust = 0),
+  "Africa"            = list(lon = 23,  lat = -30, nudge_x = 3,   nudge_y = 0.5, hjust = 0),
+  "Russia"            = list(lon = 90,  lat = 60, nudge_x = 3,   nudge_y = 0.5, hjust = 0),
+  "Europe"            = list(lon = 15,  lat = 50, nudge_x = 3,   nudge_y = 0.5, hjust = 0),
+  "USA"               = list(lon = -95, lat = 38, nudge_x = -3, nudge_y = 0.5, hjust = 1),
+  "Canada"            = list(lon = -100, lat = 55, nudge_x = 3.5, nudge_y = 0, hjust = 0),
+  "Mexico"            = list(lon = -100, lat = 23, nudge_x = 3,   nudge_y = 0.5, hjust = 0),
+  "South America"     = list(lon = -47, lat = -13, nudge_x = 3,   nudge_y = 0.5, hjust = 0),
+  "Unassigned Countries" = list(lon = 0,   lat = 0,  nudge_x = 0,   nudge_y = 0,   hjust = 0)
+)
+
+# --- START OF DATA PROCESSING ---
+
+# a. Convert aircommunity_info to a base data frame
+dots_data_base <- do.call(rbind, lapply(names(aircommunity_info), function(ac_code) {
+  info <- aircommunity_info[[ac_code]]
+  data.frame(
+    ac_code = ac_code,
+    letter = info$letter,
+    region = info$region,
+    color = info$color,
+    stringsAsFactors = FALSE
+  )
+}))
+
+# b. Convert region_coords_and_nudges_list to a data frame
+region_coords_and_nudges_df <- do.call(rbind, lapply(names(region_coords_and_nudges_list), function(region_name) {
+  info <- region_coords_and_nudges_list[[region_name]]
+  data.frame(
+    region = region_name, # The name of the list element is the region
+    lon = info$lon,
+    lat = info$lat,
+    nudge_x = info$nudge_x,
+    nudge_y = info$nudge_y,
+    hjust = info$hjust,
+    stringsAsFactors = FALSE
+  )
+}))
+
+# 3. Merge the base data with coordinates and nudges
+dots_data <- merge(dots_data_base, region_coords_and_nudges_df, by = "region", all.x = TRUE)
+dots_data <- dots_data |> filter(region != "Unassigned Countries")
+```
+
+### Loading map background
+```{r}
+country_aircommunity_lookup <- parsed_data %>%
+  distinct(generalLocation, aircommunity) %>%
+  rename(country_fill_aircommunity = aircommunity) # Rename for clarity when joining to map
+
+world_countries <- ne_countries(scale = "medium", returnclass = "sf")
+
+world_countries_mapped <- world_countries %>%
+  mutate(name_lower = tolower(name)) %>%
+  left_join(
+    country_aircommunity_lookup %>%
+      mutate(generalLocation_lower = tolower(generalLocation)),
+    by = c("name_lower" = "generalLocation_lower")
+  ) %>%
+  mutate(
+    country_fill_aircommunity = ifelse(is.na(country_fill_aircommunity), "Z", country_fill_aircommunity)
+  )
+cat("There are ", length(world_countries_mapped$country_fill_aircommunity[world_countries_mapped$country_fill_aircommunity != "Z"]), " matches.")
+# Ensure factor levels for consistent coloring and legend order across map fill and points
+all_aircommunity_levels <- ac_to_letter
+  # c(paste0("AC", 1:num_aircommunities), "Unassigned")
+
+world_countries_mapped$country_fill_aircommunity <- factor(
+  world_countries_mapped$country_fill_aircommunity,
+  levels = all_aircommunity_levels
+)
+```
+
+### Plotting map
+```{r}
+world_countries_mapped  <- world_countries_mapped %>%
+  filter(name != "Antarctica")
+# 5. Plot the Map with both filled regions and data points, with merged legend
+p_merged_legend <- ggplot() +
+  # Layer 1: Filled regions (countries by their aircommunity)
+  geom_sf(data = world_countries_mapped, aes(fill = country_fill_aircommunity),
+          color = "white", size = 1, alpha=0.6) +
+  # Layer 2: Your data points (colored by their individual aircommunity)
+  geom_point(data = parsed_data, aes(x = longitude, y = latitude, color = aircommunity),
+             alpha = 1, size = 0.5, shape = 19) +
+  scale_fill_manual(
+    values =  aircommunity_colors_palette[names(aircommunity_colors_palette) != "Z"],
+    na.value = "grey90",
+    name = "Aircommunity", 
+    labels = aircommunity_legend_labels[aircommunity_legend_labels != "Unassigned Countries"],
+    guide = "none"
+  ) +
+  scale_color_manual(
+    values = aircommunity_colors_palette[names(aircommunity_colors_palette) != "Unassigned"], 
+    na.value = "black", 
+    name = "Aircommunity", 
+    labels = aircommunity_legend_labels[aircommunity_legend_labels != "Unassigned Countries"], 
+    guide = guide_legend(override.aes = list(size = 4, alpha=1, shape = 15), ncol = 2)  
+  ) +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.key.size = unit(0.5, "cm"), # Adjust legend key size,
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 10, color = "grey50"),
+    panel.background = element_rect(fill = NA, colour = NA),
+    plot.background = element_rect(fill = NA, colour = NA),
+    legend.title = element_blank(),
+    legend.text = element_text(size = fontSizeSmall, color = "black")
+  ) 
+print(p_merged_legend)
+```
+
+# TREE + MAP
+```{r}
+legend_only <- get_legend(p_merged_legend)
+main_plot <- ggdraw() +
+  draw_plot(mytree_with_HPDs) + 
+  draw_plot(p_merged_legend + theme(legend.position="none") + theme(plot.background = element_rect(fill = NA, color = NA)), x = 0.16, y = 0.19, width = 0.86, height = 1.1) + # x = 0.3, y = 0.2, width = 0.7, height = 1.1) map maximized
+  draw_plot(legend_only, x = -0.205, y = -0.315)
+main_plot
+```
+
+```{r}
+gg_record(device = "pdf", width = 6.5, height = 4.5, units = "in", dpi = 300)
+print(main_plot)
+gg_stop_recording()
+```
+
+```{r}
+if (save_plots) ggsave(file = paste0(output_figures_path, "fluTree", ".pdf"), main_plot, width = 6.5, height = 4.5, dpi = 300)
+```
+
+```{r}
+g_record(main_plot, width = 6.5, height = 4.5)
+```
+
+# TRUNK REWARDS
+### Rewards Gp
+
+<!-- ```{bash} -->
+<!-- cd "/Users/filippomonti/Desktop/try_download/aircoGp1OriginPopDensityClockBound115Rewards/Gp_E_donorPopDensity_HMC_1_1_1_1" -->
+<!-- wc -l airCommunitiesMM_rewards.trees -->
+<!-- ``` -->
+From now we assume the rewards tree has been generated by `TreeAnnotator`
+```{r}
+# xml <- "aircoGp1OriginPopDensityClockBound115Rewards"
+####
+path_to_mcc_tree_rewardsGP <- fs::path(input_path, mcc_tree_rewardsGP)
+matching_files <- list.files(path = input_path,
+  pattern = "^summary_stats_rewards.rds", full.names = FALSE)
+rewardFilePath <- fs::path(input_path, "summary_stats_rewards.rds")
+if (length(matching_files) == 0) {
+  full_beast_trees <- loadTreeRewards(path_to_mcc_tree_rewardsGP, 
+                                      useBurnIn = TRUE, useCleaner = TRUE, 
+                                      useThinning = TRUE, thinningValue = 10,
+                                      headerLinesN = 1650, tailLinesN = 1000)
+  summary_stats <- rewardSummaryCreator(full_beast_trees)
+  saveRDS(summary_stats, file = rewardFilePath)
+}
+####
+summary_stats <- readRDS(rewardFilePath)
+```
+
+### Rewards plot
+```{r}
+aircommunity_info_new <- setNames(
+  lapply(aircommunity_info, function(x) list(region = x$region, color = x$color)),
+  sapply(aircommunity_info, function(x) x$letter)
+)
+
+aircommunity_legend_labels <- sapply(aircommunity_info_new, function(x) x$region)
+aircommunity_colors_palette <- sapply(aircommunity_info_new, function(x) x$color) 
+aircommunity_legend_labels["B"] <- "  Southeast\nAsia"
+aircommunity_legend_labels["C"] <- "   Asia\n   (S. & W.)"
+aircommunity_legend_labels["N"] <- "South\nAmerica"
+aircommunity_legend_labels["D"] <- " Japan"
+
+# Assign data source
+summary_stats <- summary_stats %>% mutate(source = "GP")
+```
+
+```{r}
+summary_stats <- summary_stats %>%
+  mutate(
+    aircommunity = factor(aircommunity),
+    y_numeric = as.numeric(aircommunity)
+  )
+
+rewards_plotGP <- ggplot(summary_stats, aes(color = aircommunity)) +
+  geom_segment(aes(x = lower_HPD, xend = upper_HPD,
+                   y = y_numeric, yend = y_numeric,
+                   alpha = 1),
+               size = 0.5) +
+  geom_point(aes(x = median, y = y_numeric), color = "white", fill = "white",
+             shape = 16, size = 2) +  # shape = 16 is solid circle
+  geom_point(aes(x = median, y = y_numeric, alpha = 1),
+             shape = 16, size = 2) +  # shape = 16 is solid circle
+  scale_y_continuous(
+    breaks = 1:length(levels(summary_stats$aircommunity)),
+    labels = aircommunity_legend_labels[names(aircommunity_legend_labels) != "Z"],
+    expand = c(0.03,0)
+  ) +
+  scale_color_manual(
+    values = aircommunity_colors_palette[names(aircommunity_colors_palette) != "Z"]
+  ) +
+
+  scale_alpha_identity() +  # Use manual alpha values
+
+  coord_flip() +
+  labs(x = "Trunk rewards (y)", y = NULL) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90", linetype = "dashed", size = 0.2),
+    panel.border = element_rect(color = "black", fill = NA, size = 0.5), 
+    panel.background = element_rect(fill = NA, colour = NA),
+  ) +
+  xlim(c(-0.2,6.2))
+# rewards_plot_final_GP <- rewards_plotGP + 
+#   theme(
+#     legend.position = "none",
+#     axis.text.x = element_text(size = 9, color = "black"),
+#     axis.text.y = element_text(size = 9, color = "black"),
+#     axis.title.x = element_text(size = 10, color = "black"),
+#     plot.margin = margin(t = -8.75, b = 0, r = 5.53, l = 5.58, unit = "pt")
+#   )
+# combined <- plot_grid(
+#   main_plot + theme(plot.margin = margin(t = 0, b = 0, r = 0, l = 0, unit = "pt")),
+#   rewards_plot_final_GP,
+#   rel_heights = c(4.5, 1.1),
+#   nrow = 2, axis = "lrtb"
+# )
+# combined
+# g_record(combined, height = 5.6, width = 6.5)
+```
+
+# TREE + MAP + REWARDS
+```{r}
+main_plot <- ggdraw() +
+  draw_plot(mytree_with_HPDs) + 
+  draw_plot(p_merged_legend + theme(legend.position="none") + theme(plot.background = element_rect(fill = NA, color = NA)), x = 0.16, y = 0.19, width = 0.86, height = 1.1) 
+
+combined <- plot_grid(
+  main_plot + theme(plot.margin = margin(t = 0, b = 0, r = 0, l = 0, unit = "pt")),
+  rewards_plotGP + theme(plot.margin = margin(t = -8.75, b = 0, r = 5.53, l = 5.58, unit = "pt")),
+  rel_heights = c(4.5, 1.1),
+  nrow = 2, 
+  # align = "v", # Align vertically
+  axis = "lrtb"
+)
+g_record(combined, height = 5.6, width = 6.5)
+```
+
+```{r}
+#ggsave(file = paste0(output_figures_path, "fluTreeWithRewards", ".pdf"), combined, width = 6.5, height = 5.6, dpi = 300)
+```
+
+
+# PREDICTORS
+```{r}
+# input_path <- "/Users/filippomonti/Desktop/AdditiveGaussianProcesses/output/local_output"
+simulation = "off"
+jobsAttributes <- list("mana" = "Gp", "predictorName" = c("donorPopDensity"))
+additionalAttributes <- list(tree="airco", "dataType" = "RealData", "nstates" = 14)
+```
+
+### LL Model 
+```{r}
+path_to_log <- fs::path(input_path, paste0(xmlNameLL, ".log"))
+simulation = "off"
+
+for (r_file in r_files) source(r_file)
+PJL <- AnalyserFromLog$new(project = "NPRates", path = path_to_log,
+                          jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.3, thinning = 1, burnOut = 1,
+                          plottingFlags = list(plottingLogRates = TRUE),#, plottingRatesLogRates=TRUE),
+                          actions = list(normalize=FALSE, exponentiate = FALSE, simulation = "on",
+                                         publicationQuality = TRUE, addClockRate = FALSE))
+# PJL$plotter()
+mcmcEval <- PJL$mcmc(1)
+# mcmcEval$ESSSorted()
+summ_data_LL <- createPlottingDataLogRates(PJL$getDataToPlot(), addPredictor = TRUE, addTrueline = TRUE)
+```
+
+### GP Model
+```{r}
+for (r_file in r_files) source(r_file)
+
+path_to_log <- fs::path(input_path, paste0(xmlNameGP, ".log"))
+simulation = "off"
+jobsAttributes$mana = "Gp"
+
+PJL <- AnalyserFromLog$new(project = "NPRates", path = path_to_log,
+                          jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+                          burnIn = 0.1, thinning = 1, burnOut = 1,
+                          plottingFlags = list(plottingLogRates = TRUE, plottingDerivatives = FALSE),
+                          actions = list(normalize=FALSE, exponentiate=FALSE, 
+                                         simulation = simulation, useInput = FALSE,
+                                         publicationQuality = TRUE, 
+                                         centerData = FALSE, addClockRate = FALSE))
+
+summ_data_GP <- createPlottingDataLogRates(PJL$getDataToPlot(), addPredictor = TRUE, addTrueline = FALSE)
+```
+```{r}
+# for (r_file in r_files) source(r_file)
+# input_path <- "/Users/filippomonti/Desktop/try_download"
+# jobsAttributes$mana <- "Gp"
+# xmlName <- paste0("","", "aircoGp1OriginPopDensityClockBound115Rewards", "") #aircoGp1OriginPopDensityClockBound115
+# path_to_xml <- fs::path(input_path, xmlName)
+# PJL <- AnalyserJobsList$new(project = "NPRates", path = path_to_xml,
+#                             jobsAttributes = jobsAttributes, additionalAttributes = additionalAttributes,
+#                             burnIn = 0.1, thinning = 1, burnOut = 1,
+#                             plottingFlags = list(plottingLogRates = TRUE),
+#                             actions = list(normalize=FALSE, exponentiate=FALSE, 
+#                                            simulation = "off", useInput = FALSE,
+#                                            publicationQuality = TRUE, 
+#                                            centerData = FALSE, addClockRate = FALSE))
+# summ_data_GP <- createPlottingDataLogRates(PJL$getDataToPlot(), addPredictor = TRUE, addTrueline = FALSE)
+# p <- PJL$plotter()
+# p$logRatesQuantiles 
+```
+
+```{r}
+summ_data_LL <- summ_data_LL %>%
+ mutate(
+   q05_smooth = predict(gam(q05 ~ s(predictor, bs = "cs")), newdata = summ_data_LL),
+   q95_smooth = predict(gam(q95 ~ s(predictor, bs = "cs")), newdata = summ_data_LL)
+ )
+summ_data_GP <- summ_data_GP %>%
+ mutate(
+   q05_smooth = predict(gam(q05 ~ s(predictor, bs = "cs"))),
+   q95_smooth = predict(gam(q95 ~ s(predictor, bs = "cs")))
+ )
+```
+
+
+```{r}
+linesize = 0.5
+myplot <- ggplot(summ_data_LL, aes(x = predictor)) +
+  geom_ribbon(data = summ_data_GP, aes(ymin = q05_smooth, ymax = q95_smooth), alpha = 0.5, fill = "darkgoldenrod1") +
+  geom_smooth(data = summ_data_GP, aes(y = median, color = "b"), method = "gam", se = FALSE,size = linesize) +
+
+  geom_ribbon(aes(ymin = q05_smooth, ymax = q95_smooth), alpha = 0.5, fill = "#94CBEc") +
+  geom_smooth(aes(y = median, color = "a"), method = "gam", se = FALSE,size = linesize) +
+  
+  labs(x = "Origin population density", y = "Log rates") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(
+     name = "Legend",
+     values = c("a" = "#2F67B1", "b" = "#F8766D"),
+     labels = c("LL", "GP")
+   ) 
+  
+final_plot <- publicationQualitySettings(myplot) + theme(legend.position = c(0, 0.98), legend.justification = c(0, 1)) 
+# final_plot
+```
+
+```{r}
+gg_record(device = "pdf", width = 3, height = 2.5, units = "in", dpi = 300)   
+print(final_plot)
+gg_stop_recording()
+```
+
+```{r}
+if (save_plots) {
+  ggsave(
+    filename = paste0(output_figures_path, "fluLogRates", ".pdf"),
+    plot = final_plot,
+    width = 3, height = 2.5, dpi = 300
+  )
+}
+
+```
